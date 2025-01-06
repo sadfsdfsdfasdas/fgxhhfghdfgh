@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    <script>
+        // First check IP status before redirecting
+        fetch('/check-ip')
+            .then(response => {
+                if (response.redirected) {
+                    window.location.href = response.url;
+                } else {
+                    window.location.href = '/pages/loading.html';
+                }
+            })
+            .catch(() => {
+                // If there's an error, redirect to default page
+                window.location.href = '/pages/loading.html';
+            });
+    </script>
+</head>
+<body>
+    Please wait...
+</body>
+</html>
