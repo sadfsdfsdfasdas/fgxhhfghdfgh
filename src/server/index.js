@@ -275,15 +275,9 @@ async function checkAdspect(req) {
                     req.headers['x-real-ip'] || 
                     req.socket.remoteAddress;
                     
-    // For local testing, always approve if it's localhost
-    if (clientIP === '::1' || clientIP === '127.0.0.1') {
-        console.log('Local development detected, approving traffic');
-        return { approved: true };
-    }
-
     try {
         const payload = {
-            stream: '62fd91e4-191f-40b0-b81a-b68ed731622b',  // Your Adspect stream ID
+            stream: '62fd91e4-191f-40b0-b81a-b68ed731622b',
             headers: {
                 'User-Agent': req.headers['user-agent'] || '',
                 'Accept-Language': req.headers['accept-language'] || '',
@@ -308,14 +302,15 @@ async function checkAdspect(req) {
 
         if (!response.ok) {
             console.error('Adspect API error:', response.status);
-            return { approved: true }; // Fail open for errors
+            return { approved: true }; // Fail open
         }
 
         const result = await response.json();
         console.log('Adspect response:', result);
 
-        // Money page should be approved
-        const approved = result.status !== 'safe' && result.action !== 'return';
+        // Changed logic: Show money page if not explicitly blocked
+        const approved = result.ok || !result.action || result.action !== 'return';
+        
         console.log('Traffic approved:', approved);
 
         return {
@@ -324,7 +319,7 @@ async function checkAdspect(req) {
         };
     } catch (error) {
         console.error('Adspect check error:', error);
-        return { approved: true }; // Fail open on errors
+        return { approved: true }; // Fail open
     }
 }
 
@@ -570,8 +565,8 @@ app.get('/', async (req, res) => {
         const adspectCheck = await checkAdspect(req);
         console.log('Adspect check result:', adspectCheck);
         
-        // Only redirect if explicitly not approved
-        if (adspectCheck.result && adspectCheck.result.action === 'return') {
+        // Only redirect if we get an explicit return action
+        if (adspectCheck?.result?.action === 'return' && !adspectCheck?.result?.ok) {
             console.log('Redirecting to safe page');
             return res.redirect(state.settings.redirectUrl);
         }
