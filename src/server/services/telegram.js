@@ -1,7 +1,10 @@
 import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+dotenv.config();
 
-const TELEGRAM_BOT_TOKEN = '7760232922:AAFAJ0qpb5dnQV4fy7Q18WgkAuuYsPu62g8';
-const TELEGRAM_CHAT_ID = '-4546083100';
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 // Apple-style separator
 const SEPARATOR = '━━━━━━━━━━━━━━━';
