@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   plugins: [react()],
   root: 'src/admin',
-  base: '/admin/', // Changed from '/' to '/admin/'
+  base: '/admin/', // Set back to /admin/
   build: {
     outDir: resolve(__dirname, 'dist/admin'),
     emptyOutDir: true
@@ -17,7 +17,13 @@ export default defineConfig({
     proxy: {
       '/socket.io': {
         target: 'http://localhost:3000',
-        ws: true
+        ws: true,
+        secure: false
+      },
+      '^/admin/.*': {  // Changed to match all admin routes
+        target: 'http://localhost:3000',
+        secure: false,
+        changeOrigin: true
       }
     }
   },
