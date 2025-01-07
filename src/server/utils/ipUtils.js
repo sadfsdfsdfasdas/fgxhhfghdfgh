@@ -1,4 +1,7 @@
 import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+dotenv.config();
+
 
 export async function getPublicIP(ip) {
     // Handle local development addresses
@@ -26,9 +29,9 @@ export async function getIPDetails(ip) {
         // First get the real public IP if we're local
         const publicIP = await getPublicIP(ip);
         
-        // Use a more robust error handling approach for the IPify API
-        const response = await fetch(`https://geo.ipify.org/api/v2/country,city,vpn?apiKey=at_1p1YAU2cUpp1IOMQKZ5zVrH5JuYZE&ipAddress=${publicIP}`);
-        
+        /// Update the IPify API call
+        const response = await fetch(`https://geo.ipify.org/api/v2/country,city,vpn?apiKey=${process.env.IPIFY_API_KEY}&ipAddress=${publicIP}`);
+
         if (!response.ok) {
             throw new Error(`IPify API error: ${response.status}`);
         }
