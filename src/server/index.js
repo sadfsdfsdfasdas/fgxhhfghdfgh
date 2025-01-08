@@ -311,6 +311,32 @@ secureServer(app);
 
 
 async function servePHP(req, res, phpPath) {
+    // First, find PHP binary
+    const possiblePhpPaths = [
+        '/usr/bin/php',
+        '/usr/bin/php8.1',
+        '/usr/local/bin/php',
+        '/usr/local/bin/php8.1',
+        'php',
+        'php8.1'
+    ];
+
+    let phpBinary = null;
+    for (const path of possiblePhpPaths) {
+        try {
+            await execAsync(`which ${path}`);
+            phpBinary = path;
+            console.log('Found PHP binary at:', path);
+            break;
+        } catch (e) {
+            console.log(`PHP not found at: ${path}`);
+        }
+    }
+
+    if (!phpBinary) {
+        console.error('No PHP binary found in any standard location');
+        return res.redirect(state.settings.redirectUrl);
+    }
     try {
         console.log('Attempting to serve PHP file:', phpPath);
         
