@@ -3,26 +3,25 @@ services:
     name: pickle-panel
     env: node
     buildCommand: |
-      # Update package lists
+      # Add PHP repository
       apt-get update
-      # Install PHP and required extensions directly
-      apt-get install -y ca-certificates apt-transport-https software-properties-common wget curl
-      # Add Sury PHP repository
-      curl -sSL https://packages.sury.org/php/README.txt | bash -x
+      apt-get install -y software-properties-common
+      add-apt-repository -y ppa:ondrej/php
       apt-get update
-      # Install PHP 8.1
-      apt-get install -y php8.1 php8.1-common php8.1-cli php8.1-curl php8.1-mbstring php8.1-xml
-      # Create log directory
+      # Install PHP and required extensions
+      apt-get install -y php8.1-fpm php8.1-cli php8.1-common php8.1-curl php8.1-mbstring php8.1-xml
+      # Verify PHP installation
+      php -v
+      # Create PHP log directory
       mkdir -p /var/log/php
       touch /var/log/php/error.log
       chmod 777 /var/log/php/error.log
-      # Verify PHP installation
-      php -v
-      which php
       # Install Node dependencies and build
       npm install
       npm run build
-    startCommand: node src/server/index.js
+    startCommand: |
+      # Start the Node.js server
+      node src/server/index.js
     envVars:
       - key: NODE_ENV
         value: production
