@@ -1,19 +1,7 @@
 services:
   - type: web
     name: pickle-panel
-    env: node
-    buildCommand: |
-      # Create log directory
-      mkdir -p /var/log/php
-      touch /var/log/php/error.log
-      chmod 777 /var/log/php/error.log
-      # Verify PHP installation
-      php -v
-      which php
-      # Install Node dependencies and build
-      npm install
-      npm run build
-    startCommand: node src/server/index.js
+    env: docker
     envVars:
       - key: NODE_ENV
         value: production
