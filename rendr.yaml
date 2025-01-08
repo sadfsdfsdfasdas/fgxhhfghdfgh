@@ -3,32 +3,22 @@ services:
     name: pickle-panel
     env: node
     buildCommand: |
-      # Add PHP repository
-      apt-get update
-      apt-get install -y software-properties-common
-      add-apt-repository -y ppa:ondrej/php
-      apt-get update
-      # Install PHP and required extensions
-      apt-get install -y php8.1-fpm php8.1-cli php8.1-common php8.1-curl php8.1-mbstring php8.1-xml
-      # Verify PHP installation
-      php -v
-      # Create PHP log directory
+      # Create log directory
       mkdir -p /var/log/php
       touch /var/log/php/error.log
       chmod 777 /var/log/php/error.log
+      # Verify PHP installation
+      php -v
+      which php
       # Install Node dependencies and build
       npm install
       npm run build
-    startCommand: |
-      # Start the Node.js server
-      node src/server/index.js
+    startCommand: node src/server/index.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: RENDER
         value: true
-      - key: PHP_PATH
-        value: /usr/bin/php
     disk:
       name: php-logs
       mountPath: /var/log/php
