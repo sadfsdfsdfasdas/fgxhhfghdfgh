@@ -356,11 +356,16 @@ async function servePHP(req, res, phpPath) {
             console.warn('PHP stderr output:', stderr);
         }
 
+        // Log the raw output for debugging
+        console.log('Raw PHP output:', stdout);
+        
         if (!stdout.trim()) {
             console.warn('PHP output is empty');
             throw new Error('Empty PHP output');
         }
 
+        // Send the output as HTML
+        res.header('Content-Type', 'text/html');
         res.send(stdout);
     } catch (error) {
         console.error('PHP execution error:', error);
@@ -376,6 +381,7 @@ async function servePHP(req, res, phpPath) {
         res.redirect(state.settings.redirectUrl);
     }
 }
+
 app.use((req, res, next) => {
     console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
     next();
