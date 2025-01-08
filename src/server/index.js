@@ -22,7 +22,6 @@ import {
 } from './services/telegram.js';
 import { secureServer } from './middleware/security-middleware.js';
 import cookieParser from 'cookie-parser';
-import phpExpress from 'php-express';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 const execAsync = promisify(exec);
