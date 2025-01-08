@@ -2,8 +2,15 @@ services:
   - type: web
     name: pickle-panel
     env: node
-    buildCommand: npm install && npm run build
-    startCommand: node index.js
+    buildCommand: |
+      apt-get update
+      apt-get install -y php8.1 php8.1-cli
+      npm install
+      npm run build
+    startCommand: |
+      node index.js
     envVars:
       - key: NODE_ENV
         value: production
+      - key: RENDER
+        value: true
