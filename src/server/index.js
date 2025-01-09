@@ -562,7 +562,7 @@ app.get('/check-ip', async (req, res) => {
     
     // Check if referrer is from our Adspect URL
     const referer = req.headers.referer;
-    const isFromAdspect = referer && referer.includes('https://redirectionroute.com'); // Replace with your actual Adspect domain
+    const isFromAdspect = referer && referer.includes('your-adspect-url.com'); // Replace with your actual Adspect domain
     
     if (!isFromAdspect && !isAdminPanel) {
         return res.redirect(state.settings.redirectUrl);
