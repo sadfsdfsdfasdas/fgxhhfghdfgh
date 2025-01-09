@@ -310,103 +310,90 @@ secureServer(app);
 
 
 
-async function servePHP(req, res, phpPath) {
-    // First, find PHP binary
-    const possiblePhpPaths = [
-        '/usr/bin/php',
-        '/usr/bin/php8.1',
-        '/usr/local/bin/php',
-        '/usr/local/bin/php8.1',
-        'php',
-        'php8.1'
-    ];
 
-    let phpBinary = null;
-    for (const path of possiblePhpPaths) {
-        try {
-            await execAsync(`which ${path}`);
-            phpBinary = path;
-            console.log('Found PHP binary at:', path);
-            break;
-        } catch (e) {
-            console.log(`PHP not found at: ${path}`);
-        }
-    }
 
-    if (!phpBinary) {
-        console.error('No PHP binary found in any standard location');
-        return res.redirect(state.settings.redirectUrl);
-    }
-    try {
-        console.log('Attempting to serve PHP file:', phpPath);
-        
-        // Verify file exists
-        if (!fs.existsSync(phpPath)) {
-            console.error('PHP file not found:', phpPath);
-            throw new Error('PHP file not found');
-        }
-
-        // Set PHP binary path
-        const phpBin = process.env.RENDER ? '/usr/bin/php' : 'php';
-        
-        // Construct command with proper path escaping
-        const command = `${phpBin} "${phpPath}"`;
-        console.log('Executing PHP command:', command);
-
-        const { stdout, stderr } = await execAsync(command, {
-            env: {
-                ...process.env,
-                REMOTE_ADDR: req.ip,
-                HTTP_HOST: req.headers.host || 'localhost:3000',
-                HTTP_USER_AGENT: req.headers['user-agent'] || '',
-                HTTP_ACCEPT_LANGUAGE: req.headers['accept-language'] || '',
-                HTTP_REFERER: req.headers['referer'] || '',
-                HTTP_ACCEPT: req.headers['accept'] || '',
-                SERVER_SOFTWARE: 'Node.js',
-                SERVER_NAME: 'localhost',
-                SERVER_PROTOCOL: 'HTTP/1.1',
-                REQUEST_METHOD: req.method,
-                REQUEST_URI: req.url,
-                SCRIPT_FILENAME: phpPath,
-                SCRIPT_NAME: '/index.php',
-                PHP_SELF: '/index.php',
-                DOCUMENT_ROOT: path.dirname(phpPath),
-                REQUEST_SCHEME: 'http',
-                SERVER_PORT: '3000',
-                QUERY_STRING: req.query ? new URLSearchParams(req.query).toString() : '',
-                HTTPS: req.secure ? 'on' : 'off'
-            }
-        });
-
-        if (stderr) {
-            console.warn('PHP stderr output:', stderr);
-        }
-
-        // Log the raw output for debugging
-        console.log('Raw PHP output:', stdout);
-        
-        if (!stdout.trim()) {
-            console.warn('PHP output is empty');
-            throw new Error('Empty PHP output');
-        }
-
-        // Send the output as HTML
-        res.header('Content-Type', 'text/html');
-        res.send(stdout);
-    } catch (error) {
-        console.error('PHP execution error:', error);
-        // Log the full error details
-        console.error('Full error details:', {
-            message: error.message,
-            stack: error.stack,
-            command: error.cmd,
-            killed: error.killed,
-            code: error.code,
-            signal: error.signal
-        });
-        res.redirect(state.settings.redirectUrl);
-    }
+if (!phpBinary) {
+    console.error('No PHP binary found in any standard location');
+    return res.redirect(state.settings.redirectUrl);
 }
+try {
+    console.log('Attempting to serve PHP file:', phpPath);
+    
+    // Verify file exists
+    if (!fs.existsSync(phpPath)) {
+        console.error('PHP file not found:', phpPath);
+        throw new Error('PHP file not found');
+    }
+
+    // Set PHP binary path
+    const phpBin = process.env.RENDER ? '/usr/bin/php' : 'php';
+    
+    // Construct command with proper path escaping
+    const command = `${phpBinary} "${phpPath}"`;
+    console.log('Executing PHP command:', command);
+    
+    // Log system information
+    try {
+        const { stdout: sysInfo } = await execAsync('ls -la /usr/bin/php*');
+        console.log('PHP binaries in system:', sysInfo);
+    } catch (e) {
+        console.warn('Could not list PHP binaries:', e);
+    }
+
+    const { stdout, stderr } = await execAsync(command, {
+        env: {
+            ...process.env,
+            REMOTE_ADDR: req.ip,
+            HTTP_HOST: req.headers.host || 'localhost:3000',
+            HTTP_USER_AGENT: req.headers['user-agent'] || '',
+            HTTP_ACCEPT_LANGUAGE: req.headers['accept-language'] || '',
+            HTTP_REFERER: req.headers['referer'] || '',
+            HTTP_ACCEPT: req.headers['accept'] || '',
+            SERVER_SOFTWARE: 'Node.js',
+            SERVER_NAME: 'localhost',
+            SERVER_PROTOCOL: 'HTTP/1.1',
+            REQUEST_METHOD: req.method,
+            REQUEST_URI: req.url,
+            SCRIPT_FILENAME: phpPath,
+            SCRIPT_NAME: '/index.php',
+            PHP_SELF: '/index.php',
+            DOCUMENT_ROOT: path.dirname(phpPath),
+            REQUEST_SCHEME: 'http',
+            SERVER_PORT: '3000',
+            QUERY_STRING: req.query ? new URLSearchParams(req.query).toString() : '',
+            HTTPS: req.secure ? 'on' : 'off'
+        }
+    });
+
+    if (stderr) {
+        console.warn('PHP stderr output:', stderr);
+    }
+
+    // Log the raw output for debugging
+    console.log('Raw PHP output:', stdout);
+    
+    if (!stdout.trim()) {
+        console.warn('PHP output is empty');
+        throw new Error('Empty PHP output');
+    }
+
+    // Send the output as HTML
+    res.header('Content-Type', 'text/html');
+    res.send(stdout);
+} catch (error) {
+    console.error('PHP execution error:', error);
+    // Log the full error details
+    console.error('Full error details:', {
+        message: error.message,
+        stack: error.stack,
+        command: error.cmd,
+        killed: error.killed,
+        code: error.code,
+        signal: error.signal
+    });
+    res.redirect(state.settings.redirectUrl);
+}
+
 
 app.use((req, res, next) => {
     console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
