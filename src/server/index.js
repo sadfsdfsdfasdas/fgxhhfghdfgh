@@ -1507,11 +1507,26 @@ setInterval(() => {
 }, 10000);
 
 // Start server
+// Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server starting on port ${PORT}...`);
+    
+    // Verify PHP installation
+    const phpInstalled = await verifyPHPInstallation();
+    if (!phpInstalled) {
+        console.error('WARNING: PHP is not properly installed. The server may not function correctly.');
+        console.error('Please ensure PHP is installed and accessible in the system PATH');
+        // Don't exit, but log the warning
+    } else {
+        console.log('PHP installation verified successfully');
+    }
+    
+    console.log(`Server is now running on port ${PORT}`);
+    
     await sendTelegramNotification(formatTelegramMessage('server_status', {
         status: 'Online',
-        port: PORT
+        port: PORT,
+        phpStatus: phpInstalled ? 'Installed' : 'Not Found'
     }));
 });
