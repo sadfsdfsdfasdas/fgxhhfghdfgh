@@ -1,27 +1,22 @@
-FROM node:18
+# Use PHP as base image
+FROM php:8.1-cli
 
-# Install PHP and required extensions
-RUN apt-get update && \
-    apt-get install -y software-properties-common && \
-    add-apt-repository universe && \
+# Install Node.js
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get update && \
-    apt-get install -y php8.1 \
-        php8.1-cli \
-        php8.1-common \
-        php8.1-curl \
-        php8.1-mbstring \
-        php8.1-xml \
-        && rm -rf /var/lib/apt/lists/*
+    apt-get install -y nodejs && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Verify installations
+RUN php -v && \
+    node -v && \
+    npm -v
 
 # Create log directory
 RUN mkdir -p /var/log/php && \
     touch /var/log/php/error.log && \
     chmod 777 /var/log/php/error.log
-
-# Verify PHP installation
-RUN php -v && \
-    php -m && \
-    which php
 
 # Set working directory
 WORKDIR /app
@@ -38,8 +33,8 @@ COPY . .
 # Build the application
 RUN npm run build
 
-# Final verification
-RUN echo "<?php echo 'PHP Test Successful'; ?>" > test.php && \
+# Create a test PHP file and verify it works
+RUN echo "<?php echo 'PHP Test'; ?>" > test.php && \
     php test.php && \
     rm test.php
 
