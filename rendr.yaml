@@ -1,22 +1,32 @@
 services:
   - type: web
     name: pickle-panel
-    env: docker
-    dockerfilePath: ./Dockerfile
-    healthCheckPath: /
-    buildFilter:
-      paths:
-        - src/**
-        - public/**
-        - package.json
-        - package-lock.json
-        - Dockerfile
+    env: node
+    buildCommand: |
+      # Add PHP repository and install PHP
+      curl -sSL https://packages.sury.org/php/README.txt | sudo bash -x
+      sudo apt-get update
+      sudo apt-get install -y php8.1 php8.1-cli php8.1-common php8.1-curl
+      
+      # Verify PHP installation
+      php -v
+      which php
+      
+      # Create log directory
+      mkdir -p /var/log/php
+      touch /var/log/php/error.log
+      chmod 777 /var/log/php/error.log
+      
+      # Install Node dependencies and build
+      npm install
+      npm run build
+    startCommand: node src/server/index.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: RENDER
         value: true
-      - key: PATH
-        value: /usr/local/bin:/usr/bin:/bin:/usr/local/bin/php
-      - key: PHP_PATH
-        value: /usr/local/bin/php
+    disk:
+      name: php-logs
+      mountPath: /var/log/php
+      sizeGB: 1
