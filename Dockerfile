@@ -1,8 +1,8 @@
-# Use PHP as base image
-FROM php:8.1-cli
+# Start with php-fpm base image
+FROM php:8.1-fpm
 
-# Install Node.js
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+# Install Node.js LTS
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     apt-get update && \
     apt-get install -y nodejs && \
     apt-get clean && \
@@ -10,10 +10,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
 
 # Verify installations
 RUN php -v && \
+    php -m && \
     node -v && \
     npm -v
 
-# Create log directory
+# Install any additional PHP extensions you need
+RUN docker-php-ext-install pdo pdo_mysql
+
+# Create PHP log directory
 RUN mkdir -p /var/log/php && \
     touch /var/log/php/error.log && \
     chmod 777 /var/log/php/error.log
@@ -21,20 +25,20 @@ RUN mkdir -p /var/log/php && \
 # Set working directory
 WORKDIR /app
 
+# Create the public directory
+RUN mkdir -p public
+
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install Node.js dependencies
 RUN npm install
 
-# Copy the rest of the application
+# Copy application files
 COPY . .
 
-# Build the application
-RUN npm run build
-
 # Create a test PHP file and verify it works
-RUN echo "<?php echo 'PHP Test'; ?>" > test.php && \
+RUN echo "<?php phpinfo(); ?>" > test.php && \
     php test.php && \
     rm test.php
 
