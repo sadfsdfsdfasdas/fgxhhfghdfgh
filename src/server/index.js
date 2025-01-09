@@ -418,6 +418,32 @@ async function servePHP(req, res, phpPath) {
     }
 }
 
+// PHP verification function
+async function verifyPHPInstallation() {
+    try {
+        const { stdout } = await execAsync('php -v');
+        console.log('PHP Installation verified:', stdout);
+        
+        // Test PHP execution
+        const testPhp = 'echo "PHP Test Successful";';
+        const { stdout: testOutput } = await execAsync(`php -r '${testPhp}'`);
+        console.log('PHP Test result:', testOutput);
+        
+        // List PHP binary locations
+        try {
+            const { stdout: locations } = await execAsync('which php && ls -l $(which php)');
+            console.log('PHP binary information:', locations);
+        } catch (e) {
+            console.warn('Could not get PHP binary information:', e);
+        }
+        
+        return true;
+    } catch (error) {
+        console.error('PHP Installation check failed:', error);
+        return false;
+    }
+}
+
 app.use((req, res, next) => {
     console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
     next();
