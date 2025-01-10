@@ -408,9 +408,10 @@ const pageServingMiddleware = async (req, res, next) => {
         // Get requested page from URL
         let requestedPage = req.url.split('?')[0].substring(1);
         
-        // Skip middleware for static assets
-        if (requestedPage.includes('.') && !requestedPage.endsWith('.html')) {
-            return next();
+        // Prevent direct access to pages folder
+        if (requestedPage.toLowerCase().startsWith('pages/')) {
+            console.log('Attempted direct page access, redirecting to root');
+            return res.redirect('/');
         }
 
         // Debug logging
