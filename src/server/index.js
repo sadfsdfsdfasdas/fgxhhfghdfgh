@@ -395,7 +395,7 @@ const pagesPath = join(__dirname, '../../public/pages');
 state.settings.availablePages = scanPages(pagesPath);
 
 // Initialize Telegram integration
-initTelegramService(state.settings);
+initTelegramService(state);
 
 // Page serving middleware
 const pageServingMiddleware = async (req, res, next) => {
