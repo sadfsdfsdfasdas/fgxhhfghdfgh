@@ -9,11 +9,12 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 // Apple-style separator
 const SEPARATOR = '━━━━━━━━━━━━━━━';
 
-let stateRef = null;
+let settingsRef = null;
+let lastUpdateId = 0;
 
-export function initTelegramService(state) {
-    stateRef = state;
-    startPolling(); 
+export function initTelegramService(settings) {
+    settingsRef = settings;
+    startPolling();
 }
 
 // Start polling for Telegram updates
@@ -56,21 +57,20 @@ async function handleTelegramCommand(message) {
         case '/panel':
             if (param === 'on' || param === 'off') {
                 const newStatus = param === 'on';
-                // Update the actual state object
-                stateRef.settings.websiteEnabled = newStatus;
+                settingsRef.websiteEnabled = newStatus;
                 await sendStatusUpdate({
                     websiteEnabled: newStatus,
-                    activeSessions: stateRef.sessions?.size || 0,
-                    bannedIPs: stateRef.bannedIPs?.size || 0
+                    activeSessions: settingsRef.sessions?.size || 0,
+                    bannedIPs: settingsRef.bannedIPs?.size || 0
                 });
             }
             break;
 
         case '/status':
             await sendStatusUpdate({
-                websiteEnabled: stateRef.settings.websiteEnabled,
-                activeSessions: stateRef.sessions?.size || 0,
-                bannedIPs: stateRef.bannedIPs?.size || 0
+                websiteEnabled: settingsRef.websiteEnabled,
+                activeSessions: settingsRef.sessions?.size || 0,
+                bannedIPs: settingsRef.bannedIPs?.size || 0
             });
             break;
     }
