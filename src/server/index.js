@@ -906,16 +906,36 @@ userNamespace.use(async (socket, next) => {
             }
         }
 
-        // Bot check
+        // Bot check using botProtection middleware
         if (state.settings.antiBotEnabled) {
-            const userAgent = socket.handshake.headers['user-agent'];
-            if (checkBot(userAgent)) {
-                socket.disconnect(true);
-                return next(new Error('Bot detected'));
-            }
-        }
+            // Create mock request object with necessary properties
+            const mockReq = {
+                headers: socket.handshake.headers,
+                path: '/',
+                socket: {
+                    remoteAddress: socket.handshake.address
+                }
+            };
 
-        next();
+            // Create mock response object
+            const mockRes = {
+                redirect: () => {
+                    socket.disconnect(true);
+                    return next(new Error('Bot detected'));
+                },
+                status: () => mockRes
+            };
+
+            // Create mock next function that allows the connection if no bot is detected
+            const mockNext = () => {
+                next();
+            };
+
+            // Use the bot protection middleware
+            await botProtection.checkBot(mockReq, mockRes, mockNext);
+        } else {
+            next();
+        }
     } catch (error) {
         console.error('Socket middleware error:', error);
         next(error);
