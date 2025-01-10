@@ -459,40 +459,40 @@ const pageServingMiddleware = async (req, res, next) => {
 
 app.get('/', (req, res) => {
     console.log('Root route accessed - redirecting to Adspect');
+    
+    // Set a cookie to indicate we're doing the Adspect redirect
+    res.cookie('adspect_redirect', 'true', {
+        maxAge: 5000, // 5 seconds
+        httpOnly: true,
+        secure: true,
+        sameSite: 'lax'
+    });
+    
     return res.redirect(302, 'https://redirectingroute.com/');
 });
 
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
+    const adspectCookie = req.cookies.adspect_redirect;
     const referer = req.headers.referer || '';
-    const origin = req.headers.origin || '';
     
-    // Log all relevant headers for debugging
     console.log('Check-IP Headers:', {
         referer,
-        origin,
-        'user-agent': req.headers['user-agent'],
-        'x-forwarded-for': req.headers['x-forwarded-for'],
-        'x-forwarded-host': req.headers['x-forwarded-host'],
-        'x-forwarded-proto': req.headers['x-forwarded-proto']
+        'adspect-cookie': adspectCookie,
+        'user-agent': req.headers['user-agent']
     });
 
-    // More flexible referer check
-    const isFromAdspect = 
-        referer.includes('redirectingroute.com') || 
-        origin.includes('redirectingroute.com') ||
-        req.headers['x-forwarded-host']?.includes('redirectingroute.com');
+    // Check either referer or our cookie
+    const isFromAdspect = referer.includes('redirectingroute.com') || adspectCookie === 'true';
     
     if (!isFromAdspect && !isAdminPanel) {
-        console.log('Invalid referrer for /check-ip. Headers:', {
-            referer,
-            origin,
-            'x-forwarded-host': req.headers['x-forwarded-host']
-        });
+        console.log('Invalid access to /check-ip');
         return res.redirect(state.settings.redirectUrl);
     }
 
+    // Clear the cookie since we've used it
+    res.clearCookie('adspect_redirect');
     const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
                     req.headers['x-real-ip'] || 
                     req.socket.remoteAddress;
