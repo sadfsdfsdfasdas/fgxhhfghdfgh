@@ -301,16 +301,6 @@ const generateSessionId = (clientIP, userAgent) => {
 };
 
 // Initialize server components
-const app = express();
-const botProtection = createBotProtection();
-const pageProtection = createPageProtection(sessionManager);
-app.use(express.json());
-app.use(cookieParser());
-
-secureServer(app);
-app.use(botProtection.checkBot);
-app.use(pageProtection);
-
 
 
 
@@ -374,7 +364,21 @@ const io = new Server(server, {
 
 
 // Initialize managers and state
+const app = express();
+app.use(express.json());
+app.use(cookieParser());
+
+secureServer(app);
+
+// Initialize managers and state
 const sessionManager = new SessionManager();
+
+// Now initialize bot protection and page protection after sessionManager
+const botProtection = createBotProtection();
+const pageProtection = createPageProtection(sessionManager);
+// Add middleware
+app.use(botProtection.checkBot);
+app.use(pageProtection);
 
 const state = {
     settings: {
