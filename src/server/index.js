@@ -303,14 +303,13 @@ const generateSessionId = (clientIP, userAgent) => {
 // Initialize server components
 const app = express();
 const botProtection = createBotProtection();
-
+const pageProtection = createPageProtection(sessionManager);
 app.use(express.json());
 app.use(cookieParser());
 
 secureServer(app);
-app.use(checkBot);
+app.use(botProtection.checkBot);
 app.use(pageProtection);
-
 
 
 
