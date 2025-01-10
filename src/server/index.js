@@ -469,31 +469,37 @@ app.get('/', async (req, res) => {
     }
     
     if (!state.settings.websiteEnabled) {
-        console.log('- Website disabled, redirecting to:', state.settings.redirectUrl);
         return res.redirect(state.settings.redirectUrl);
     }
 
-    // Use 302 temporary redirect and ensure headers are set
-    console.log('- Redirecting to Adspect:', 'https://redirectingroute.com/');
-    res.writeHead(302, {
-        'Location': 'https://redirectingroute.com/',
+    // Set headers to prevent caching
+    res.set({
         'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
         'Pragma': 'no-cache',
-        'Expires': '0'
+        'Expires': '0',
+        'Surrogate-Control': 'no-store'
     });
-    return res.end();
+
+    // Add small delay before redirect to ensure clean redirect chain
+    setTimeout(() => {
+        res.redirect(302, 'https://redirectingroute.com/');
+    }, 50);  // 50ms delay should be enough to prevent race condition
 });
 
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
     
-    // Modify the Adspect check to allow the initial redirect
     const referer = req.headers.referer;
-    const isFromAdspect = referer && (
-        referer.includes('redirectingroute.com') || 
-        referer === undefined // Allow undefined referer for initial redirect
-    );
+    // Give a small grace period for the initial redirect
+    const lastRedirectTime = Date.now() - req._startTime; 
+    const isFromAdspect = referer && referer.includes('redirectingroute.com');
+    const isInitialRedirect = !referer && lastRedirectTime < 1000; // 1 second grace period
+    
+    if (!isFromAdspect && !isAdminPanel && !isInitialRedirect) {
+        console.log('Invalid referrer for /check-ip:', referer);
+        return res.redirect(state.settings.redirectUrl);
+    }
     
     if (!isFromAdspect && !isAdminPanel) {
         console.log('Invalid referrer for /check-ip:', referer);
