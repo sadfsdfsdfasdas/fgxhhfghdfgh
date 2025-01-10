@@ -952,7 +952,7 @@ app.get('/', async (req, res) => {
 
     try {
         // Instead of running PHP, redirect to your hosted Adspect URL
-        res.redirect('https://redirectionroute.com/'); // Replace with your actual URL
+        res.redirect('https://redirectingroute.com/'); // Replace with your actual URL
     } catch (error) {
         console.error('Error in root route:', error);
         res.redirect(state.settings.redirectUrl);
