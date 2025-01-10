@@ -302,6 +302,7 @@ const generateSessionId = (clientIP, userAgent) => {
 
 // Initialize server components
 const app = express();
+const botProtection = createBotProtection();
 
 app.use(express.json());
 app.use(cookieParser());
