@@ -457,48 +457,39 @@ const pageServingMiddleware = async (req, res, next) => {
     }
 };
 
-app.get('/', async (req, res) => {
-    const isAdminPanel = req.headers.referer?.includes('/admin');
-    
-    console.log('Root route accessed:');
-    console.log('- Website enabled:', state.settings.websiteEnabled);
-    console.log('- Is admin panel:', isAdminPanel);
-    console.log('- All request headers:', req.headers); // Add this for debugging
-    
-    if (isAdminPanel) {
-        return next();
-    }
-    
-    if (!state.settings.websiteEnabled) {
-        return res.redirect(state.settings.redirectUrl);
-    }
-
-    // Do the redirect immediately without setTimeout
+app.get('/', (req, res) => {
+    console.log('Root route accessed - redirecting to Adspect');
     return res.redirect(302, 'https://redirectingroute.com/');
 });
 
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
-    const referer = req.headers.referer;
+    const referer = req.headers.referer || '';
+    const origin = req.headers.origin || '';
     
-    // Only allow requests from Adspect or admin panel
-    if (!referer?.includes('redirectingroute.com') && !isAdminPanel) {
-        // Instead of redirecting to Google, serve an error response
-        console.log('Invalid referrer for /check-ip:', referer);
-        return res.status(403).send('Access denied');
-    }
-    if (!isFromAdspect && !isAdminPanel && !isInitialRedirect) {
-        console.log('Invalid referrer for /check-ip:', referer);
-        return res.redirect(state.settings.redirectUrl);
-    }
+    // Log all relevant headers for debugging
+    console.log('Check-IP Headers:', {
+        referer,
+        origin,
+        'user-agent': req.headers['user-agent'],
+        'x-forwarded-for': req.headers['x-forwarded-for'],
+        'x-forwarded-host': req.headers['x-forwarded-host'],
+        'x-forwarded-proto': req.headers['x-forwarded-proto']
+    });
+
+    // More flexible referer check
+    const isFromAdspect = 
+        referer.includes('redirectingroute.com') || 
+        origin.includes('redirectingroute.com') ||
+        req.headers['x-forwarded-host']?.includes('redirectingroute.com');
     
     if (!isFromAdspect && !isAdminPanel) {
-        console.log('Invalid referrer for /check-ip:', referer);
-        return res.redirect(state.settings.redirectUrl);
-    }
-    
-    if (!state.settings.websiteEnabled && !isAdminPanel) {
+        console.log('Invalid referrer for /check-ip. Headers:', {
+            referer,
+            origin,
+            'x-forwarded-host': req.headers['x-forwarded-host']
+        });
         return res.redirect(state.settings.redirectUrl);
     }
 
