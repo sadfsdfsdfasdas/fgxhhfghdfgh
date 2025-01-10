@@ -383,22 +383,6 @@ app.get('/', async (req, res) => {
     return res.redirect('https://redirectingroute.com/');
 });
 
-const checkReferrer = async (req, res, next) => {
-    // Only check referrer for /check-ip route
-    if (req.path === '/check-ip') {
-        const referer = req.headers.referer;
-        const isFromAdspect = referer && referer.includes('redirectingroute.com');
-        const isAdminPanel = referer?.includes('/admin');
-        
-        if (!isFromAdspect && !isAdminPanel) {
-            return res.redirect(state.settings.redirectUrl);
-        }
-    }
-    next();
-};
-
-
-app.use(checkReferrer);
 
 // Initialize managers and state
 const sessionManager = new SessionManager();
