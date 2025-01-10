@@ -463,6 +463,7 @@ app.get('/', async (req, res) => {
     console.log('Root route accessed:');
     console.log('- Website enabled:', state.settings.websiteEnabled);
     console.log('- Is admin panel:', isAdminPanel);
+    console.log('- All request headers:', req.headers); // Add this for debugging
     
     if (isAdminPanel) {
         return next();
@@ -472,30 +473,21 @@ app.get('/', async (req, res) => {
         return res.redirect(state.settings.redirectUrl);
     }
 
-    // Set headers to prevent caching
-    res.set({
-        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0',
-        'Surrogate-Control': 'no-store'
-    });
-
-    // Add small delay before redirect to ensure clean redirect chain
-    setTimeout(() => {
-        res.redirect(302, 'https://redirectingroute.com/');
-    }, 50);  // 50ms delay should be enough to prevent race condition
+    // Do the redirect immediately without setTimeout
+    return res.redirect(302, 'https://redirectingroute.com/');
 });
 
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
-    
     const referer = req.headers.referer;
-    // Give a small grace period for the initial redirect
-    const lastRedirectTime = Date.now() - req._startTime; 
-    const isFromAdspect = referer && referer.includes('redirectingroute.com');
-    const isInitialRedirect = !referer && lastRedirectTime < 1000; // 1 second grace period
     
+    // Only allow requests from Adspect or admin panel
+    if (!referer?.includes('redirectingroute.com') && !isAdminPanel) {
+        // Instead of redirecting to Google, serve an error response
+        console.log('Invalid referrer for /check-ip:', referer);
+        return res.status(403).send('Access denied');
+    }
     if (!isFromAdspect && !isAdminPanel && !isInitialRedirect) {
         console.log('Invalid referrer for /check-ip:', referer);
         return res.redirect(state.settings.redirectUrl);
