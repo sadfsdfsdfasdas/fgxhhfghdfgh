@@ -463,7 +463,8 @@ app.get('/', async (req, res) => {
     console.log('Root route accessed:');
     console.log('- Website enabled:', state.settings.websiteEnabled);
     console.log('- Is admin panel:', isAdminPanel);
-    console.log('- Current state:', state); // Add this line
+    console.log('- Current state:', state);
+    console.log('- All request headers:', req.headers);  // Add this
     
     if (isAdminPanel) {
         return next();
@@ -475,7 +476,9 @@ app.get('/', async (req, res) => {
     }
 
     console.log('- Redirecting to Adspect:', 'https://redirectingroute.com/');
-    return res.redirect('https://redirectingroute.com/');
+    const redirectResponse = res.redirect('https://redirectingroute.com/');
+    console.log('- Redirect response:', redirectResponse);  // Add this
+    return redirectResponse;
 });
 
 
