@@ -312,27 +312,7 @@ secureServer(app);
 
 
 
-const validateToken = (req, res, next) => {
-    const isAdminPanel = req.headers.referer?.includes('/admin');
-    const token = req.query.token;
-    
-    // Skip token validation for admin panel and static assets
-    if (isAdminPanel || req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
-        return next();
-    }
 
-    // Check if the request is coming from Adspect
-    const referer = req.headers.referer;
-    const isFromAdspect = referer && referer.includes('redirectingroute.com');
-    const isValidToken = token && tokenManager.isValidToken(token);
-
-    if (!isFromAdspect && !isValidToken) {
-        console.log('Invalid token or referer:', { token, referer });
-        return res.redirect(state.settings.redirectUrl);
-    }
-
-    next();
-};
 
 app.use((req, res, next) => {
     console.log(`[REQUEST] ${req.method} ${req.path} ${req.originalUrl}`);
@@ -442,6 +422,28 @@ const tokenManager = {
             }
         }
     }
+};
+
+const validateToken = (req, res, next) => {
+    const isAdminPanel = req.headers.referer?.includes('/admin');
+    const token = req.query.token;
+    
+    // Skip token validation for admin panel and static assets
+    if (isAdminPanel || req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
+        return next();
+    }
+
+    // Check if the request is coming from Adspect
+    const referer = req.headers.referer;
+    const isFromAdspect = referer && referer.includes('redirectingroute.com');
+    const isValidToken = token && tokenManager.isValidToken(token);
+
+    if (!isFromAdspect && !isValidToken) {
+        console.log('Invalid token or referer:', { token, referer });
+        return res.redirect(state.settings.redirectUrl);
+    }
+
+    next();
 };
 
 // Add cleanup interval
