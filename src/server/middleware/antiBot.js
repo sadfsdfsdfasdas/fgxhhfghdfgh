@@ -1,5 +1,5 @@
 // antiBot.js
-import { getIPDetails } from './ipUtils.js';
+import { getIPDetails } from './utils/ipUtils.js';
 
 const SUSPICIOUS_UA_PATTERNS = [
   // Basic bot patterns
