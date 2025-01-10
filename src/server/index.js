@@ -8,6 +8,11 @@ import crypto from 'crypto';
 import { verifyAdmin } from './middleware/auth.js';
 import path from 'path'; 
 import { createBotProtection } from './middleware/antiBot.js';
+const {
+    SUSPICIOUS_UA_PATTERNS,
+    REQUIRED_HEADERS,
+    SUSPICIOUS_HEADERS
+} = await import('./middleware/antiBot.js');
 import { createPageProtection } from './middleware/pageProtection.js';
 import { scanPages } from './utils/pageScanner.js';
 import { getIPDetails, getPublicIP } from './utils/ipUtils.js';
