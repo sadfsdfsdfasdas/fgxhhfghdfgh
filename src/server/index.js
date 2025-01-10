@@ -486,9 +486,12 @@ app.get('/', async (req, res) => {
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
     
-    // Check if referrer is from our Adspect URL and fail if not
+    // Modify the Adspect check to allow the initial redirect
     const referer = req.headers.referer;
-    const isFromAdspect = referer && referer.includes('redirectingroute.com');
+    const isFromAdspect = referer && (
+        referer.includes('redirectingroute.com') || 
+        referer === undefined // Allow undefined referer for initial redirect
+    );
     
     if (!isFromAdspect && !isAdminPanel) {
         console.log('Invalid referrer for /check-ip:', referer);
