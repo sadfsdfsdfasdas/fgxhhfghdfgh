@@ -524,7 +524,15 @@ app.get('/check-ip', async (req, res) => {
         }
 
         // Use the bot protection's client fingerprinting
-        const fingerprint = botProtection.generateClientFingerprint(req);
+        const fingerprint = [
+            req.headers['user-agent'],
+            req.headers['accept-language'],
+            req.headers['accept-encoding'],
+            req.headers['sec-ch-ua'],
+            req.headers['sec-ch-ua-platform'],
+            req.headers['sec-ch-ua-mobile']
+        ].filter(Boolean).join('|');
+        
         const key = `${publicIP}:${fingerprint}`;
 
         // Initialize bot score for this request
