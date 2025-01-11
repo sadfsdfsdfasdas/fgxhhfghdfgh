@@ -3,6 +3,7 @@ import fs from 'fs';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
+import { promises as fsPromises } from 'fs';
 import { dirname, join } from 'path';
 import crypto from 'crypto';
 import { verifyAdmin } from './middleware/auth.js';
