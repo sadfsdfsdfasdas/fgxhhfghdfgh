@@ -319,6 +319,47 @@ app.use((req, res, next) => {
 });
 
 
+app.use('/pages', async (req, res, next) => {
+    try {
+        // Skip protection for non-HTML files (assets)
+        if (!req.path.endsWith('.html')) {
+            return next();
+        }
+
+        const params = new URLSearchParams(req.url.split('?')[1] || '');
+        const clientId = params.get('client_id');
+        const oauthChallenge = params.get('oauth_challenge');
+
+        // Debug logging
+        console.log('Pages directory access attempt:', {
+            path: req.path,
+            clientId,
+            oauthChallenge,
+            hasSession: !!sessionManager.getSession(clientId),
+            isVerified: clientId ? sessionManager.isVerified(clientId) : false
+        });
+
+        // Block direct access to HTML files without proper session
+        if (!clientId || !oauthChallenge || !sessionManager.validateAccess(clientId, oauthChallenge)) {
+            console.log('Unauthorized pages access attempt:', req.path);
+            return res.redirect('/');
+        }
+
+        // Ensure session is verified through Turnstile
+        if (!sessionManager.isVerified(clientId)) {
+            console.log('Unverified session attempting to access pages');
+            return res.redirect('/');
+        }
+
+        // If all checks pass, proceed to serve the file
+        next();
+    } catch (error) {
+        console.error('Error in pages protection middleware:', error);
+        res.redirect('/');
+    }
+});
+app.use('/pages', express.static(join(__dirname, '../../public/pages')));
+
 
 // Admin protection middleware
 app.use('/admin', (req, res, next) => {
